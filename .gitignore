@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+
+# env
+.env
+.env*.local
+
+# sqlite / local data
+*.db
+*.db-journal
+
+# logs
+*.log
+npm-debug.log*
+
+# os
+.DS_Store
+Thumbs.db
+
+# ide
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# build / electron
+dist/
+release/
