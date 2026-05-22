@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Handoff"
+  short_description: "Generate repo handoffs for continuation"
+  default_prompt: "Generate a project handoff for the current repo."

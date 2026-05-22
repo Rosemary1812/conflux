@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conflux · 新建单聊</title>
+  <link rel="stylesheet" href="styles/feishu.css" />
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-row">
+          <div class="brand-copy">
+            <div class="brand-title">Conflux</div>
+          </div>
+        </div>
+      </div>
+      <input type="search" class="conv-search" placeholder="⌕ 搜索                         ⌘K" />
+      <div class="sidebar-action">
+        <a class="sidebar-link" href="single-chat-new.html">＋ <span>新建聊天</span></a>
+        <a class="sidebar-link" href="group-chat-new.html">＋ <span>新建群聊</span></a>
+      </div>
+      <div class="conv-list">
+        <div class="sidebar-section">
+          <div class="section-head">
+            <span>聊天</span>
+            <span class="fold">⌄</span>
+          </div>
+        </div>
+      </div>
+      <div class="archived-fold">
+        <span>已归档</span>
+        <span class="tag">3</span>
+      </div>
+      <div class="sidebar-profile">
+        <button class="profile-trigger" onclick="location.href='settings.html'">
+          <span class="settings-trigger-icon">⚙</span>
+          <span class="settings-trigger-text">设置</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="chat-header">
+        <h1>新建聊天</h1>
+        <div class="header-tools">
+          <button class="header-tool-btn" title="显示 / 收起右侧栏">◫</button>
+          <button class="header-tool-btn" title="打开终端">⌄_</button>
+        </div>
+      </header>
+
+      <div class="message-area">
+        <div class="conversation-setup">
+          <div class="setup-card">
+            <div class="setup-title">单聊会话</div>
+            <div class="setup-desc">
+              进入空白对话后，通过 <code>@Agent</code> 完成选择。单聊只允许选择一个 Agent；一旦确认，就不能在当前会话中改成别的 Agent。
+            </div>
+
+            <div class="system-note">
+              第一步：在输入框里输入一个 Agent mention，例如 <code>@claude-code</code>。<br />
+              第二步：发送第一条消息后，该 Agent 会被锁定为当前单聊对象。<br />
+              第三步：如果想换别的 Agent，只能重新“新建聊天”。
+            </div>
+
+            <div class="mention-row">
+              <span class="mention-pill">@claude-code</span>
+              <span class="mention-pill locked">已锁定</span>
+            </div>
+
+            <div class="setup-rule">
+              示例：<code>@claude-code 帮我 review 当前分支改动</code><br />
+              规则：当前会话只允许一个 Agent 身份，不支持在单聊中二次切换。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer-status">
+          <span style="margin-left:auto">Cmd+Enter 发送</span>
+        </div>
+        <div class="composer-shell">
+          <div class="composer-input">
+            <textarea placeholder="@claude-code 帮我 review 当前分支改动"></textarea>
+          </div>
+          <div class="composer-toolbar">
+            <button class="composer-chip" title="上传图片">
+              <span class="composer-chip-icon">🖼</span>
+            </button>
+            <button class="composer-chip" title="上传附件">
+              <span class="composer-chip-icon">📎</span>
+            </button>
+            <div class="workspace-pill">
+              <span class="workspace-icon">📁</span>
+              <span class="workspace-copy">
+                <span class="workspace-label">当前工作区：</span>
+                <span class="workspace-path">D:\coding\agent\AgentHub</span>
+              </span>
+              <span class="workspace-caret">⌄</span>
+            </div>
+            <div class="composer-end">
+              <button class="send-btn">↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,4 @@
+interface:
+  display_name: "State TODO"
+  short_description: "Manage docs/state/TODO.md items"
+  default_prompt: "Record or work through TODO items for this repo."

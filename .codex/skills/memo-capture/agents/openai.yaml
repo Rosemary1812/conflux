@@ -1,0 +1,4 @@
+interface:
+  display_name: "Memo Capture"
+  short_description: "Turn discussions into docs/memo notes"
+  default_prompt: "Capture the current discussion into docs/memo."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "State TOFIX"
+  short_description: "Manage docs/state/TOFIX.md issues"
+  default_prompt: "Record or work through TOFIX items for this repo."

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conflux V1 原型导航</title>
+  <link rel="stylesheet" href="styles/feishu.css" />
+</head>
+
+<body>
+  <div class="hub">
+    <h1>Conflux <span style="color:var(--primary)">V1 原型</span></h1>
+    <p>这一版先按你的标注修“页面成分和入口位置”，不先锁最终视觉风格。</p>
+    <ul>
+      <li>
+        <a href="single-chat.html">单聊主页面</a>
+        <small>修正 logo、会话分组、底部用户设置入口、上传型输入框、右栏可收起 / 拖拽</small>
+      </li>
+      <li>
+        <a href="single-chat-new.html">新建单聊</a>
+        <small>直接进入空白对话；首条消息里只允许 @ 一个 Agent，确认后锁定</small>
+      </li>
+      <li>
+        <a href="group-chat-new.html">新建群聊</a>
+        <small>直接进入空白群聊；首条消息可 @ 多个 Agent，Orchestrator 自动加入</small>
+      </li>
+      <li>
+        <a href="group-chat.html">群聊静态预览</a>
+        <small>更明确地区分单聊 / 群聊身份、任务卡片、Orchestrator 占位头像、禁用发送</small>
+      </li>
+      <li>
+        <a href="settings.html">设置弹层预览</a>
+        <small>不再独立跳转；预览从用户头像弹出的设置层，含 Provider / Skill / 自建 Agent</small>
+      </li>
+      <li>
+        <a href="states.html">空状态与错误</a>
+        <small>无会话、healthcheck 失败、连接中、发送失败等状态页</small>
+      </li>
+    </ul>
+  </div>
+</body>
+
+</html>

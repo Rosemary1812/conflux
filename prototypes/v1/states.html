@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>空状态与错误 — Conflux</title>
+  <link rel="stylesheet" href="styles/feishu.css" />
+  <style>
+    .state-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 24px;
+      height: calc(100vh - 48px);
+      overflow: auto;
+      background: var(--bg-app);
+    }
+
+    .state-frame {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      min-height: 320px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .state-frame .label {
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-2);
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg-hover);
+    }
+
+    .state-frame .body {
+      flex: 1;
+    }
+
+    .top-bar {
+      height: 48px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+      .state-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="top-bar">
+    <a href="index.html">← 原型导航</a>
+    <span style="font-weight:600">空状态 / 错误 / healthcheck</span>
+  </div>
+
+  <div class="state-grid">
+    <!-- 无会话 -->
+    <div class="state-frame">
+      <div class="label">空状态 · 未选择会话</div>
+      <div class="body state-center">
+        <div class="icon-lg">💬</div>
+        <h2>选择一个会话开始</h2>
+        <p style="font-size:13px;max-width:240px">从左侧列表选择，或创建与 Agent 的单聊。</p>
+        <button class="btn-primary" style="margin-top:16px">+ 新建对话</button>
+      </div>
+    </div>
+
+    <!-- Agent 未安装 -->
+    <div class="state-frame">
+      <div class="label">healthcheck 失败 · Agent 未就绪</div>
+      <div class="body state-center" style="padding:24px">
+        <div class="alert alert-error" style="text-align:left;max-width:320px">
+          <strong>OpenCode</strong> 未安装或未加入 PATH。<br />
+          请先安装 CLI 后再创建单聊。
+        </div>
+        <div class="icon-lg">⚠️</div>
+        <h2>无法连接 Agent</h2>
+        <p style="font-size:13px">前往设置检测本机 Agent 状态</p>
+        <button class="btn-primary" style="margin-top:12px" onclick="location.href='settings.html'">打开设置弹层预览</button>
+      </div>
+    </div>
+
+    <!-- 连接中 -->
+    <div class="state-frame">
+      <div class="label">SSE · 连接中</div>
+      <div class="body state-center">
+        <div class="typing" style="font-size:15px">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+        <h2 style="margin-top:16px">正在连接 Claude Code…</h2>
+        <p style="font-size:13px;color:var(--text-3)">首次启动可能较慢</p>
+      </div>
+    </div>
+
+    <!-- 发送失败 -->
+    <div class="state-frame">
+      <div class="label">错误 · 消息发送失败</div>
+      <div class="body" style="padding:20px;background:var(--bg-app)">
+        <div class="msg-row user">
+          <div class="msg-avatar">我</div>
+          <div class="msg-body">
+            <div class="msg-bubble">
+              <p>继续上一个任务</p>
+            </div>
+          </div>
+        </div>
+        <div class="alert alert-error">
+          Agent 进程退出（code 1）· 查看日志<br />
+          <button class="btn-ghost" style="margin-top:8px;font-size:12px">重试</button>
+          <button class="btn-ghost" style="margin-top:8px;font-size:12px">重新生成</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 无消息 -->
+    <div class="state-frame" style="grid-column:1/-1;max-height:280px">
+      <div class="label">单聊 · 新会话无消息</div>
+      <div class="body state-center" style="flex-direction:row;gap:24px;text-align:left">
+        <div class="conv-avatar" style="width:56px;height:56px;font-size:24px">CC</div>
+        <div>
+          <h2>与 Claude Code 对话</h2>
+          <p style="font-size:13px;color:var(--text-2);margin:8px 0">支持 Markdown、代码块与文件附件。Cmd+Enter 发送。</p>
+          <p style="font-size:12px;color:var(--text-3)">示例：帮我 review 当前分支的改动</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

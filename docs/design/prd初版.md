@@ -48,14 +48,14 @@ Conflux 是一个以 **IM 聊天为核心交互范式**的多 Agent 协作平台
 │ [+ 新建对话] │  [消息气泡]               │ Agent 状态       │
 │ • 会话 A    │  [Agent 回复流]           │ Todo 进度        │
 │   🤖 Claude │  [产物预览卡片]           │ 产出文件列表      │
-│ • 会话 B    │  [输入框]                 │ 上下文用量        │
+│ • 会话 B    │  [输入框]                 │ 产出文件列表      │
 │   🤖×3 群聊 │                          │                  │
 └─────────────┴──────────────────────────┴──────────────────┘
 
 ```
 
-- **左侧仅会话列表**，无独立「Agent 通讯录」。与哪个 Agent 聊，在 **新建对话** 时选择；已建会话的参与 Agent 固定（单聊 1 个 / 群聊多个），体现在会话条目头像与消息流中。
-- **新建对话**：弹层/向导 → 选单聊或群聊 → 勾选 Agent（内置 + 自建）→ 创建后会话出现在左侧列表。
+- **左侧仅会话列表**，无独立「Agent 通讯录」。单聊可在新建时选择 Agent；群聊不在创建时选定成员，而是在进入消息流后通过 `@AgentName` 初始化参与 Agent。
+- **新建对话**：弹层/向导 → 选单聊或群聊 → 创建后会话出现在左侧列表；若为群聊，消息流提示用户通过 `@claude-code @openclaw ...` 邀请 Agent 参与本会话。
 
 ### 2.2 技术栈
 
@@ -188,18 +188,18 @@ electron/
 - 顶部 **「+ 新建对话」** 按钮（见 §3.1.2）
 - 支持搜索（**P1**）：关键词搜索会话名称和消息内容
 
-#### 3.1.2 新建对话（选择 Agent）
+#### 3.1.2 新建对话
 
 点击左侧「+ 新建对话」打开创建向导（弹层），**不在左侧展示 Agent 列表**：
 
 1. **选择模式**：单聊 / 群聊
-2. **选择参与 Agent**：从可选列表中勾选（展示头像、名称、能力标签）
+2. **单聊选择 Agent**：单聊模式下从可选列表中选择 1 个 Agent（展示头像、名称、能力标签）
   - 内置：Claude Code、Codex、Hermes、OpenClaw 等（见 §3.1.3）  
   - 自建：用户已通过 §3.6 创建的 Agent  
-  - 群聊：至少选 2 个执行 Agent；Orchestrator 由平台在群聊中自动启用，无需用户勾选
-3. **确认创建**：生成会话并进入中间消息流；左侧列表新增该会话条目
+3. **群聊不选择 Agent**：群聊模式下直接创建空群聊，进入消息流后由系统提示用户用 `@` 初始化参与 Agent
+4. **确认创建**：生成会话并进入中间消息流；左侧列表新增该会话条目
 
-向导内可提供 **「+ 新建 Agent」** 入口，等价于在新会话中发送 `/agent-creator`（§3.6 / §3.7），创建完成后回到向导继续勾选。
+向导内可提供 **「+ 新建 Agent」** 入口，等价于在新会话中发送 `/agent-creator`（§3.6 / §3.7），创建完成后可用于单聊选择，或在群聊中通过 `@` 邀请。
 
 #### 3.1.3 可接入 Agent 清单（规划）
 
@@ -245,14 +245,14 @@ electron/
 #### 3.2.3 输入框
 
 - 支持多行文本输入
-- 支持 `@AgentName` 语法，在群聊中指定 Agent
+- 支持 `@AgentName` 语法：群聊未初始化时，第一条含多个 `@` 的消息用于确定参与 Agent；群聊已初始化后，`@` 用于指定某个已参与 Agent 回复
 - 支持 **斜杠命令** 调起 Skill（**P0**，见 §3.7）：
   - 输入 `/` 弹出 Skill 补全列表（内置 + 自建）
   - 格式：`/<skill-slug>` 或 `/<skill-slug> 附加说明`（如 `/agent-creator 做一个只改 React 的 Agent`）
   - 发送后由 `SkillRunner` 接管本轮及后续多轮，直至 Skill 流程结束或用户 `/cancel`
 - 支持文件上传（**P0**：图片、常见文本/代码附件）
 - 发送快捷键：`Cmd/Ctrl + Enter`
-- 输入框下方状态条：当前会话绑定的 Agent / 平台；**Skill 激活时**显示 `正在运行：/<slug>`
+- 输入框下方状态条：单聊显示当前绑定 Agent / 平台；群聊显示参与 Agent 或「等待 @Agent 初始化」；**Skill 激活时**显示 `正在运行：/<slug>`
 
 #### 3.2.4 流式输出
 
@@ -286,11 +286,6 @@ electron/
 - 显示：文件名、类型、生成时间
 - 点击预览，支持代码文件在 Monaco Editor 中打开
 
-**上下文用量区**
-
-- 进度条显示当前 context window 使用量
-- 分类标注：技能 / 联网搜索 / 文件 / 其他（参考截图设计）
-
 #### 3.3.2 群聊模式下的面板
 
 **多 Agent 状态区**
@@ -320,8 +315,11 @@ electron/
 
 #### 3.4.2 群聊模式
 
-- **创建时**选定多个执行 Agent；Orchestrator 自动参与编排
-- 会话中可通过 `@` 在消息里指定由哪个 Agent 回复；**P1** 再评估是否支持会话中途增删成员 Agent
+- **创建时不选 Agent**：用户只创建一个空群聊；进入消息流后，系统提示用户通过 `@` 参与 Agent 完成群聊初始化，例如 `@claude-code @openclaw 帮我拆分实现这个功能`
+- **群聊初始化**：第一条包含 2 个及以上有效 Agent mention 的用户消息，会把被 @ 到的 Agent 记录为本群聊参与 Agent；Orchestrator 自动参与编排，无需用户手动 @
+- **动态加入 Agent（P0）**：群聊初始化后，用户后续消息如果 @ 到尚未参与本群聊的 Agent，则将其加入参与列表，并在消息流中插入系统提示（如「已邀请 Codex 加入本群聊」）。Orchestrator 之后可把任务分派给新加入的 Agent
+- **同类 Agent 多实例（P0）**：同一群聊允许启动多个同类 Agent 实例。第一次 @ 使用默认别名（如 `@claude-code`），再次 @ 同一基础 Agent 时创建命名实例（如 `@claude-code-2`），后续消息必须用实例别名区分
+- **实例隔离**：同类 Agent 多实例共享底层平台配置，但在会话内拥有不同 `conversation_agent_id`、展示名称、任务状态和消息身份；P0 不强制不同工作区隔离，代码冲突由 Orchestrator 串行调度和 P1 冲突处理继续增强
 - 用户发送消息后，Orchestrator 自动分析意图，拆解任务，分派给合适的子 Agent
 - **P0**：Orchestrator 分派后，子任务支持 **串行** 与 **并行**（按 `depends_on` 依赖图调度，无依赖可并行）
 - **P1**：**失败降级**、**代码冲突处理**（见 §3.4.3）
@@ -384,7 +382,9 @@ Orchestrator 汇总并发送最终总结
 
 ### 3.6 自建 Agent（P0）
 
-与课题要求对齐：用户通过 **对话式创建** 定义 Agent，产出 **System Prompt + 工具集**。创建流程由内置 Skill **`agent-creator`** 驱动（§3.7），**非**静态表单。
+与课题要求对齐：用户通过 **对话式创建** 定义 Agent，P0 产出 **System Prompt + 权限模式**。创建流程由内置 Skill **`agent-creator`** 驱动（§3.7），**非**静态表单。
+
+P0 不向用户暴露底层工具列表（如 `read_file`、`write_file`、`bash`、`grep`）。多数用户实际需要定义的是 Agent 的角色、职责和权限边界，而不是理解每个底层工具。平台根据权限模式自动映射内部工具能力；细粒度工具集配置作为 P1/P2 高级能力再评估。
 
 #### 3.6.1 创建入口（均指向 `/agent-creator`）
 
@@ -398,16 +398,16 @@ Orchestrator 汇总并发送最终总结
 
 ```
 用户：/agent-creator 我想做一个只会改 React 组件的 Agent
-Skill：好的。它主要用 Claude Code 还是 Codex？需要能执行终端命令吗？
-用户：Claude Code，要能读写在项目里改文件
-Skill：已生成草案——名称「React 助手」、System Prompt（预览）、工具：read_file / write_file / bash …
-用户：再加上不要用 bash 跑安装，只允许改 src 目录
+Skill：好的。它主要用 Claude Code 还是 Codex？这个 Agent 只读审查，还是允许修改文件？
+用户：Claude Code，允许修改，但只负责前端组件
+Skill：已生成草案——名称「React 助手」、System Prompt（预览）、权限：restricted-editable，允许修改目录：components/、app/
+用户：不要让它跑安装命令
 Skill：已更新。确认创建吗？
 用户：确认
 → 持久化为自建 Agent，出现在「新建对话」的 Agent 选择列表；会话 `active_skill_id` 清空
 ```
 
-多轮修订字段：名称、头像、描述、System Prompt、底层平台、能力标签、**工具集**；草稿存 `AgentDraft`，确认后写入 `Agent` 表。
+多轮修订字段：名称、头像、描述、System Prompt、底层平台、能力标签、**权限模式**、可选作用域；草稿存 `AgentDraft`，确认后写入 `Agent` 表。
 
 #### 3.6.3 产出字段（创建完成后）
 
@@ -419,20 +419,26 @@ Skill：已更新。确认创建吗？
 | 描述            | 一句话能力描述                                      | 由创建引导对话从多轮消息归纳                        |
 | System Prompt | 完整系统提示词                                      | 多轮迭代，支持预览 diff                         |
 | 底层平台          | Claude Code / Codex / Hermes / OpenClaw（四选一） | 对话中选择                                  |
-| 工具集 `tools`   | 该 Agent 允许使用的工具 ID 列表                        | 对话勾选 + 自然语言（「要能搜网页」→ 映射到 `web_search`） |
+| 权限模式 `permission_mode` | `readonly` / `editable` / `restricted-editable` | 对话中选择或由自然语言推断 |
+| 可编辑作用域 `editable_scopes` | `restricted-editable` 下允许修改的目录或文件 glob | 对话中确认；P0 可选 |
 | 能力标签          | 选择器中的 Agent 卡片展示                             | 自动打标 + 用户可改                            |
 
 
-**工具集（`tools`）定义**：
+**权限模式定义（P0）**：
 
-- 与底层平台能力取交集：例如 Claude Code 适配器声明可用工具，自建 Agent 从中勾选子集
-- 内置工具示例：`read_file`、`write_file`、`bash`、`grep`、`web_search`、MCP 服务（按平台暴露）
-- 存储为 JSON 数组；执行时由适配器将列表传给对应 CLI/SDK
-- **P0 最小集**：至少支持勾选 3～5 个内置工具；复杂 MCP 扩展放 P1
+- `readonly`：只读分析模式。可读取项目文件、搜索代码、总结上下文；不能写文件，不能应用 diff。适合 Reviewer、架构解释、答辩文档分析等 Agent。
+- `editable`：可编辑模式。可读取并修改项目文件；平台仍应限制危险操作，P0 不开放任意 shell，只允许预设检查命令（如 build / test / lint）。
+- `restricted-editable`：受限编辑模式。可读取全项目，但只能修改指定目录或文件 glob（如 `components/`、`app/`、`docs/`）。作为 P0 时间允许项；若来不及，先降级为 `editable` + prompt 约束。
+
+**内部工具映射（平台实现细节）**：
+
+- 平台根据 `permission_mode` 自动派生底层工具能力，例如 `readonly` 映射读取/搜索能力，`editable` 在此基础上允许受控写入。
+- shell 能力与编辑能力分开处理：P0 不提供任意 shell，只提供 allowlist 式检查命令（如 `npm run build`、`npm test`、`npm run lint`，按项目脚本存在性展示）。
+- 细粒度 `tools[]` 勾选、MCP 工具扩展、自定义 shell allowlist 放到 P1/P2，不作为 P0 用户创建 Agent 的必填项。
 
 #### 3.6.4 创建后的使用
 
-- 创建完成后出现在 **新建对话 → 选择 Agent** 列表中；可被拉入群聊、被 Orchestrator 分派
+- 创建完成后出现在 Agent 候选列表中：可用于新建单聊选择，也可在群聊初始化时通过 `@AgentName` 邀请参与，并被 Orchestrator 分派
 - **P1**：对已有自建 Agent 再次发送 `/agent-creator <agent_id>` 进入编辑流程
 
 ---
@@ -446,7 +452,7 @@ Skill：已更新。确认创建吗？
 | 维度 | Skill | 自建 Agent（§3.6） |
 | ---- | ----- | ------------------ |
 | 触发 | 斜杠命令 `/slug` | 被选中后作为会话的执行者 |
-| 产物 | 新的 `Skill` 记录或完成一次工作流 | 持久化的 Agent（Prompt + 工具集 + 平台） |
+| 产物 | 新的 `Skill` 记录或完成一次工作流 | 持久化的 Agent（Prompt + 权限模式 + 平台） |
 | 运行方式 | `SkillRunner` 短期接管会话 | `AgentAdapter.run()` 长期执行用户任务 |
 | 典型用途 | 创建 Agent、创建 Skill、团队规范检查 | 写代码、写文档、群聊子任务 |
 
@@ -462,7 +468,7 @@ Skill：已更新。确认创建吗？
 
 | Slug | 命令 | 作用 | 产出 |
 | ---- | ---- | ---- | ---- |
-| `agent-creator` | `/agent-creator` | 对话式创建/编辑自建 Agent（§3.6） | `Agent` + `tools[]` + `system_prompt` |
+| `agent-creator` | `/agent-creator` | 对话式创建/编辑自建 Agent（§3.6） | `Agent` + `system_prompt` + `permission_mode` |
 | `skill-creator` | `/skill-creator` | 对话式创建/编辑用户 Skill | `Skill` 记录 + `SKILL.md` 正文写入存储 |
 
 二者均为平台内置 `is_builtin=true`，正文存于仓库 `skills/builtin/<slug>/SKILL.md`（可版本化），运行时由 `SkillRunner` 读取。
@@ -489,7 +495,7 @@ SkillRunner.start(conversation_id, skill_id, user_args)
 ```
 
 - **与 Orchestrator 分离**：Orchestrator 仅群聊分派；Skill 仅响应斜杠命令，**互不替换**。
-- **与自建 Agent 执行分离**：Skill 运行时的 LLM 只服务于「创建流程」；创建完成的 Agent 之后用 **用户定义的 Prompt + 工具集** 执行。
+- **与自建 Agent 执行分离**：Skill 运行时的 LLM 只服务于「创建流程」；创建完成的 Agent 之后用 **用户定义的 Prompt + 权限模式** 执行。
 
 #### 3.7.5 更多 Skill 能力（P1）
 
@@ -519,7 +525,9 @@ Agent
 ├── platform_config (JSON, 可选覆盖：CLI 路径、工作目录、API 覆盖项等)
 ├── model_name      (可选，平台内具体模型名)
 ├── tags            (JSON array)
-├── tools           (JSON array, 工具集 ID 列表，自建 Agent 必填)
+├── permission_mode (readonly | editable | restricted-editable)
+├── editable_scopes (JSON array, 可选；restricted-editable 下限制可改目录 / glob)
+├── tools           (JSON array, 可选；由 permission_mode 派生或 P1 高级配置覆盖)
 ├── is_builtin      (bool)
 └── created_by      (User.id, null if builtin)
 
@@ -539,7 +547,7 @@ AgentDraft  (/agent-creator 运行中的草稿)
 ├── user_id
 ├── conversation_id
 ├── skill_run_id      (可选)
-├── draft_payload     (JSON: 未确认的 name / prompt / tools 等)
+├── draft_payload     (JSON: 未确认的 name / prompt / permission_mode / editable_scopes 等)
 └── updated_at
 
 SkillDraft  (/skill-creator 运行中的草稿，结构类似 AgentDraft)
@@ -554,15 +562,21 @@ Conversation
 ├── is_archived
 └── created_at
 
-ConversationAgent  (会话中的 Agent 成员)
+ConversationAgent  (会话中的 Agent 成员实例)
+├── id
 ├── conversation_id
-└── agent_id
+├── agent_id          (指向 Agent；同一 conversation 可重复引用同一 agent_id)
+├── alias             (会话内唯一，如 claude-code、claude-code-2)
+├── display_name      (展示名，如 Claude Code #2)
+├── joined_at
+└── status            (idle | running | done | failed)
 
 Message
 ├── id
 ├── conversation_id
 ├── sender_type     (user | agent | system | skill)
 ├── sender_id       (User.id or Agent.id or Skill.id)
+├── sender_instance_id (可选；agent 消息指向 ConversationAgent.id，用于区分同类 Agent 多实例)
 ├── skill_run_id    (可选，Skill 运行期间关联)
 ├── content         (Markdown 文本)
 ├── artifacts       (JSON array, 产物列表)
@@ -760,7 +774,7 @@ interface AgentAdapter {
 | 维度            | Orchestrator（平台内置）                          | 用户自建 Agent（§3.6）                |
 | ------------- | ------------------------------------------- | ------------------------------- |
 | System Prompt | 平台固定、版本化，专用于任务拆解与分派                         | 用户对话式定义，可任意迭代                   |
-| 工具集           | 仅编排所需（读 Agent 列表、写 Task 状态等），与用户自选工具 **隔离** | 用户自选 `tools`，经适配器传给对应平台         |
+| 权限边界          | 仅编排所需（读 Agent 列表、写 Task 状态等），与用户自建 Agent 权限 **隔离** | 用户选择 `permission_mode`，平台据此派生工具能力 |
 | IM 形态         | 群聊中自动介入；可展示为独立「编排器」系统消息                     | 仅出现在「新建对话」Agent 选择器；创建后作为会话成员展示 |
 | 执行路径          | 规划 → JSON 任务表 → 调用各 `*Adapter` 执行子任务        | 单平台适配器 `run()`                  |
 
@@ -775,10 +789,10 @@ OrchestratorService（平台自研，非用户可选 Agent）
 └── ResultAggregator      # 汇总子 Agent 产出，写入消息流
 ```
 
-- **执行子任务**时才调用各平台 `*Adapter`，且传入的是 **各 Agent 自己的** System Prompt 与工具集（自建 Agent 为用户在 §3.6 中定义的 Prompt + `tools`）。
-- **编排规划**走 `OrchestratorPlanner`，与用户自建 Agent 的 Prompt / 工具集 **完全隔离**。
+- **执行子任务**时才调用各平台 `*Adapter`，且传入的是 **各 Agent 自己的** System Prompt 与权限模式（自建 Agent 为用户在 §3.6 中定义的 Prompt + `permission_mode`）。
+- **编排规划**走 `OrchestratorPlanner`，与用户自建 Agent 的 Prompt / 权限模式 **完全隔离**。
 
-**不推荐、低优先级（P2 / 远期探索，非 P0/P1）**：把某个已接入 Agent（如 Claude Code）配置为「兼做规划器」。原因：与用户自建 Agent 的「自选 Prompt + 工具集」模型冲突，且易出现改代码与改任务表混在一起。产品默认 **不暴露** 该选项。
+**已决策（P0/P1 不支持）**：不允许把某个已接入 Agent（如 Claude Code / Codex）配置为 Orchestrator 或 OrchestratorPlanner。原因：Orchestrator 是平台核心调度服务，必须保持任务状态、并发、失败处理和权限边界可控；已接入 Agent 只作为执行者被调度，不接管编排权。
 
 #### OrchestratorPlanner 配置（自研子模块，≠ 执行 Agent）
 
@@ -787,7 +801,7 @@ OrchestratorService（平台自研，非用户可选 Agent）
 
 #### 编排 System Prompt（仅 OrchestratorPlanner，≠ 自建 Agent）
 
-> **边界**：以下 Prompt **只**用于群聊编排；**绝不**写入用户自建 Agent 记录，也 **不**覆盖用户为自建 Agent 配置的 System Prompt / 工具集。
+> **边界**：以下 Prompt **只**用于群聊编排；**绝不**写入用户自建 Agent 记录，也 **不**覆盖用户为自建 Agent 配置的 System Prompt / 权限模式。
 
 ```
 你是 Conflux 内置任务编排器（OrchestratorPlanner）。你只输出任务分派 JSON，不执行代码、不调用用户工具。
@@ -830,7 +844,7 @@ OrchestratorService（平台自研，非用户可选 Agent）
 | `SkillRunner` | `/agent-creator`、`/skill-creator` 等 | 对应 Skill 的 `SKILL.md` | `Agent` / `Skill` 记录 |
 | `OrchestratorService` | 群聊用户消息 | 平台固定编排 Prompt（§6.4） | `Task` + 子 Agent 执行 |
 
-用户通过 `/agent-creator` 定稿的 **System Prompt + 工具集** 仅属于自建 Agent；**不**进入 Orchestrator，也 **不**与 `skill-creator` 的 Skill 正文混用。
+用户通过 `/agent-creator` 定稿的 **System Prompt + 权限模式** 仅属于自建 Agent；**不**进入 Orchestrator，也 **不**与 `skill-creator` 的 Skill 正文混用。
 
 ---
 
@@ -842,7 +856,7 @@ OrchestratorService（平台自研，非用户可选 Agent）
 | 功能                                  | 优先级         |
 | ----------------------------------- | ----------- |
 | 群聊 + Orchestrator（串行 + 并行分派）        | **P0**      |
-| 自建 Agent（`/agent-creator` + System Prompt + 工具集） | **P0**      |
+| 自建 Agent（`/agent-creator` + System Prompt + 权限模式） | **P0**      |
 | Skill 体系（斜杠命令 + `agent-creator` / `skill-creator`） | **P0**      |
 | 消息引用回复（含群聊多 Agent 场景）               | **P0**      |
 | 图片消息、文件附件                           | **P0**      |
@@ -867,7 +881,7 @@ OrchestratorService（平台自研，非用户可选 Agent）
 - **群聊模式 + Orchestrator**：串行 + 并行分派（`depends_on` DAG）、任务进度卡片、多 Agent 气泡区分
 - **消息引用回复**：单聊 / 群聊均可引用，群聊携带被引用消息与相关 Agent 上下文
 - **Skill + 斜杠命令**：`SkillRunner`、`/agent-creator`、`/skill-creator`（§3.7）
-- **自建 Agent**：经 `/agent-creator` 对话创建（§3.6），产出 System Prompt + **工具集**
+- **自建 Agent**：经 `/agent-creator` 对话创建（§3.6），产出 System Prompt + **权限模式**（P0 至少支持 `readonly` / `editable`；时间允许再支持 `restricted-editable`）
 - **自建 Skill**：经 `/skill-creator` 对话创建（§3.7.3），产出 `SKILL.md` 落库
 - **图片消息 + 文件附件**：上传、渲染、随消息传给 Agent（适配器按平台能力传入）
 
@@ -892,12 +906,10 @@ OrchestratorService（平台自研，非用户可选 Agent）
 
 - **会话搜索**：会话名 + 消息内容关键词
 - **Orchestrator 增强**：失败降级、代码冲突处理（§3.4.3）
-- （低优先级）指定已接入 Agent 兼做规划器的实验配置
 - Agent 平台设置页（CLI 路径、工作目录、鉴权覆盖）
-- 上下文用量进度条
 - 自建 Agent / Skill **对话式编辑**（`/agent-creator`、`/skill-creator` 带 id 参数）
 - Skill 导出到项目 `.cursor/skills/` 或用户目录（写文件）
-- 复杂 MCP 工具接入扩展
+- 自建 Agent 高级工具配置：细粒度 `tools[]` 勾选、MCP 工具接入、自定义检查命令 allowlist
 
 ### P2 — 时间充裕时做
 
@@ -967,5 +979,3 @@ OrchestratorService（平台自研，非用户可选 Agent）
 | 6   | 本机未安装某 Agent 时如何提示？              | 隐藏 / 灰显 + 安装指引 / 仅健康检查报错             | 灰显 + 设置页安装指引           |
 | 7   | OrchestratorPlanner 的 LLM 端点？    | 自研 HTTP 客户端 + OpenAI 兼容 API        | **OpenAI 兼容**（`.env` 配置）  |
 | 8   | 能否把用户自建 Agent 设为 Orchestrator？   | —                                    | **已决策：永久不允许**（无配置项）   |
-
-
