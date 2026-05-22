@@ -12,10 +12,15 @@ out/
 # sqlite / local data
 *.db
 *.db-journal
+data/*.sqlite
+data/*.sqlite-*
 
 # logs
 *.log
 npm-debug.log*
+
+# typescript
+*.tsbuildinfo
 
 # os
 .DS_Store
