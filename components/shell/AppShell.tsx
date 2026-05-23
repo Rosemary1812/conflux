@@ -359,14 +359,14 @@ export function AppShell() {
           onStop={stopMessage}
         />
       </section>
-      <ContextPanel
-        collapsed={contextCollapsed}
-        conversation={activeConversation}
-        messages={messages}
-        onResize={setContextWidth}
-        onToggle={() => setContextCollapsed((value) => !value)}
-        view={view}
-      />
+      {!contextCollapsed ? (
+        <ContextPanel
+          conversation={activeConversation}
+          messages={messages}
+          onResize={setContextWidth}
+          view={view}
+        />
+      ) : null}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </main>
   );

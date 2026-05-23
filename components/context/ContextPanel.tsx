@@ -1,20 +1,18 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, FileText, GripVertical } from "lucide-react";
+import { FileText, GripVertical } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { AgentIcon } from "@/components/agents/AgentIcon";
 import type { ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
 
 type ContextPanelProps = {
-  collapsed: boolean;
   conversation: ConversationSummary | null;
   messages: MockMessage[];
   onResize: (width: number) => void;
-  onToggle: () => void;
   view: ConversationView;
 };
 
-export function ContextPanel({ collapsed, conversation, messages, onResize, onToggle, view }: ContextPanelProps) {
+export function ContextPanel({ conversation, messages, onResize, view }: ContextPanelProps) {
   const isGroup = view === "group" || view === "new-group";
   const isNew = view === "new-single" || view === "new-group" || (!conversation?.lockedAgent && messages.length === 0);
 
@@ -35,16 +33,6 @@ export function ContextPanel({ collapsed, conversation, messages, onResize, onTo
     window.addEventListener("mouseup", handleMouseUp);
   }
 
-  if (collapsed) {
-    return (
-      <aside className="context-rail">
-        <button aria-label="展开右侧栏" className="icon-button" onClick={onToggle} type="button">
-          <ChevronLeft size={17} />
-        </button>
-      </aside>
-    );
-  }
-
   return (
     <aside className="context-panel">
       <div className="context-resizer" onMouseDown={handleMouseDown}>
@@ -52,9 +40,6 @@ export function ContextPanel({ collapsed, conversation, messages, onResize, onTo
       </div>
       <div className="context-topbar">
         <h2>{isGroup ? "群聊上下文" : "当前上下文"}</h2>
-        <button aria-label="收起右侧栏" className="icon-button" onClick={onToggle} type="button">
-          <ChevronRight size={17} />
-        </button>
       </div>
 
       {isNew ? (

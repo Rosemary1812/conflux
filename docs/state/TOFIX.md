@@ -14,4 +14,12 @@
 
 ## 已做
 
-暂无。
+- 时间：2026-05-23 12:00
+  优先级：P2
+  所属范围：UI
+  问题/目标：右侧栏与顶栏存在两个功能重复的收起/展开按钮；收起时仍保留约 38px 深色 `context-rail`，右侧竖条始终可见。
+  解决方案：仅保留聊天顶栏（Terminal 旁）的右侧栏开关；移除 `ContextPanel` 内收起态 rail 与展开态顶栏的 toggle 按钮；收起时将第三列宽度设为 0 或完全隐藏，使布局呈 L 形（左栏 + 主聊天区），展开时再显示完整上下文面板。
+  涉及修改文件：`components/context/ContextPanel.tsx`、`components/chat/MessageStream.tsx`、`components/shell/AppShell.tsx`、`app/globals.css`
+  验收标准：全应用仅顶栏一处可切换右侧栏；收起后右侧深色区域完全不可见、不占布局宽度；展开后上下文面板正常显示且可拖拽调整宽度；`npm run typecheck` 通过。
+  完成时间：2026-05-23 12:30
+  验证结果：`npm run typecheck` 通过；收起时第三列宽度为 0 且不渲染 `ContextPanel`，仅顶栏按钮控制展开/收起。

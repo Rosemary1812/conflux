@@ -1056,18 +1056,11 @@ pre {
   opacity: 0.74;
 }
 
-.context-panel,
-.context-rail {
+.context-panel {
   position: relative;
   min-width: 0;
   border-left: 1px solid var(--border);
   background: var(--bg-shell);
-}
-
-.context-rail {
-  display: flex;
-  justify-content: center;
-  padding-top: 14px;
 }
 
 .context-resizer {
@@ -1616,8 +1609,7 @@ textarea {
     grid-template-columns: 260px minmax(0, 1fr);
   }
 
-  .context-panel,
-  .context-rail {
+  .context-panel {
     display: none;
   }
 }
