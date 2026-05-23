@@ -1,4 +1,5 @@
 import { subscribeToConversation } from "@/lib/conversations/stream-bus";
+import { listMessages } from "@/lib/conversations/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,21 @@ export async function GET(_: Request, context: RouteContext) {
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(encoder.encode("event: connected\ndata: {\"ok\":true}\n\n"));
+
+      for (const message of listMessages(conversationId)) {
+        if (message.tone === "agent" && message.status) {
+          controller.enqueue(
+            encoder.encode(
+              `event: message_replace\ndata: ${JSON.stringify({
+                type: "message_replace",
+                messageId: message.id,
+                content: message.body,
+                status: message.status
+              })}\n\n`
+            )
+          );
+        }
+      }
 
       const unsubscribe = subscribeToConversation(conversationId, (event) => {
         controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));

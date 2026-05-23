@@ -10,9 +10,10 @@ const activeRuns = new Map<string, AbortController>();
 type StartRunParams = {
   conversationId: string;
   agent: AgentSummary;
+  userContent: string;
 };
 
-export function startFakeAgentRun({ conversationId, agent }: StartRunParams) {
+export function startFakeAgentRun({ conversationId, agent, userContent }: StartRunParams) {
   const now = Date.now();
   const runId = crypto.randomUUID();
   const assistantMessageId = crypto.randomUUID();
@@ -56,6 +57,7 @@ export function startFakeAgentRun({ conversationId, agent }: StartRunParams) {
     runId,
     conversationId,
     messageId: assistantMessageId,
+    shouldFail: shouldTriggerFakeError(userContent),
     signal: controller.signal
   });
 
@@ -86,17 +88,19 @@ async function drainFakeRun({
   runId,
   conversationId,
   messageId,
+  shouldFail,
   signal
 }: {
   runId: string;
   conversationId: string;
   messageId: string;
+  shouldFail: boolean;
   signal: AbortSignal;
 }) {
   let content = "";
 
   try {
-    for await (const event of runFakeAdapter(signal)) {
+    for await (const event of runFakeAdapter({ shouldFail, signal })) {
       if (event.type === "text_delta") {
         content += event.delta;
         getDb().update(messages).set({ content }).where(eq(messages.id, messageId)).run();
@@ -148,6 +152,10 @@ async function drainFakeRun({
   } finally {
     activeRuns.delete(runId);
   }
+}
+
+function shouldTriggerFakeError(content: string) {
+  return /(^|\s)\/fake-error(\s|$)|模拟错误|触发错误/i.test(content);
 }
 
 function markRunCancelled(conversationId: string, runId: string, messageId?: string) {

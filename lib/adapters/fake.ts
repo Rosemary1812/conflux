@@ -8,10 +8,21 @@ const chunks = [
   "下一阶段可以把这里替换成 Claude Code / Codex 的真实适配器，而不需要改前端消息流。"
 ];
 
-export async function* runFakeAdapter(signal: AbortSignal): AsyncIterable<FakeAgentEvent> {
+export async function* runFakeAdapter({
+  shouldFail,
+  signal
+}: {
+  shouldFail?: boolean;
+  signal: AbortSignal;
+}): AsyncIterable<FakeAgentEvent> {
   for (const delta of chunks) {
     await delay(420, signal);
     yield { type: "text_delta", delta };
+  }
+
+  if (shouldFail) {
+    await delay(260, signal);
+    throw new Error("Fake adapter error for Phase 3 validation.");
   }
 
   yield { type: "message_done" };

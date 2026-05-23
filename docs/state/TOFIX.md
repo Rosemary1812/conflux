@@ -14,6 +14,16 @@
 
 ## 已做
 
+- 时间：2026-05-23 14:30
+  优先级：P2
+  所属范围：UI
+  问题/目标：消息列表可视区域占满整页高度，底部输入框（Composer）以绝对定位叠在消息区上方，导致对话框下方仍能看到消息内容。
+  解决方案：调整 `chat-surface` 布局，使消息区高度 = 中间栏高度 − 顶栏 − Composer 占位（改为 flex 分栏或预留固定底部空间），消息滚动区域不得延伸进输入框区域。
+  涉及修改文件：`app/globals.css`、`components/shell/AppShell.tsx`（若需结构调整）、`components/chat/Composer.tsx`
+  验收标准：Composer 下方不再出现消息气泡/文本；滚到底时最后一条消息停在输入框上方；不同窗口高度下布局仍正确。
+  完成时间：2026-05-23 15:00
+  验证结果：`chat-surface` 改为 flex 分栏；Composer 取消 absolute/fixed 叠层；`.message-area` 移除 190px 底部 padding，消息滚动区不再延伸进输入框区域。
+
 - 时间：2026-05-23 12:00
   优先级：P2
   所属范围：UI

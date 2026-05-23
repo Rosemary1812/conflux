@@ -212,7 +212,8 @@ export function sendMessage(conversationId: string, content: string) {
 
   const run = startFakeAgentRun({
     conversationId,
-    agent: selectedAgent
+    agent: selectedAgent,
+    userContent: trimmed
   });
 
   return {

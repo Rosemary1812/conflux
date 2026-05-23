@@ -107,7 +107,7 @@ function SingleContext({ conversation }: { conversation: ConversationSummary | n
         <ul className="file-list">
           <li>
             <FileText size={14} />
-            Phase 2 暂不生成产物
+            Phase 3 暂不生成产物
           </li>
         </ul>
       </section>

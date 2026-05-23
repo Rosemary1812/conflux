@@ -1,5 +1,11 @@
 export type ConversationStreamEvent =
   | {
+      type: "message_replace";
+      messageId: string;
+      content: string;
+      status: "running" | "done" | "error" | "cancelled";
+    }
+  | {
       type: "message_delta";
       messageId: string;
       delta: string;

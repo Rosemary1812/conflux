@@ -47,6 +47,22 @@ export function AppShell() {
 
     const events = new EventSource(`/api/conversations/${activeConversationId}/stream`);
 
+    events.addEventListener("message_replace", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+
+      if (payload.type !== "message_replace") {
+        return;
+      }
+
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === payload.messageId
+            ? { ...message, body: payload.content, status: payload.status }
+            : message
+        )
+      );
+    });
+
     events.addEventListener("message_delta", (event) => {
       const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
 
