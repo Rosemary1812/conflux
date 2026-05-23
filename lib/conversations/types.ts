@@ -26,7 +26,7 @@ export type MockMessage = {
   avatar?: string;
   role?: string;
   tone?: "user" | "agent" | "orchestrator" | "event";
-  status?: "running" | "done" | "preview";
+  status?: "running" | "done" | "preview" | "error" | "cancelled";
   time?: string;
   body: string;
   code?: string;

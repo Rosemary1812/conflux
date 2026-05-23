@@ -7,6 +7,7 @@ import { ContextPanel } from "@/components/context/ContextPanel";
 import { SettingsModal } from "@/components/settings/SettingsModal";
 import { ConversationSidebar } from "@/components/shell/ConversationSidebar";
 import type { ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
+import type { ConversationStreamEvent } from "@/lib/conversations/stream-bus";
 
 export function AppShell() {
   const [view, setView] = useState<ConversationView>("new-single");
@@ -37,6 +38,62 @@ export function AppShell() {
     }
 
     void loadMessages(activeConversationId);
+  }, [activeConversationId, isGroup]);
+
+  useEffect(() => {
+    if (!activeConversationId || isGroup) {
+      return;
+    }
+
+    const events = new EventSource(`/api/conversations/${activeConversationId}/stream`);
+
+    events.addEventListener("message_delta", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+
+      if (payload.type !== "message_delta") {
+        return;
+      }
+
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === payload.messageId ? { ...message, body: `${message.body}${payload.delta}` } : message
+        )
+      );
+    });
+
+    events.addEventListener("message_status", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+
+      if (payload.type !== "message_status") {
+        return;
+      }
+
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === payload.messageId ? { ...message, status: payload.status } : message
+        )
+      );
+    });
+
+    events.addEventListener("run_status", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+
+      if (payload.type !== "run_status") {
+        return;
+      }
+
+      setIsSending(payload.status === "running");
+
+      if (payload.status !== "running") {
+        void loadConversations();
+      }
+    });
+
+    events.onerror = () => {
+      events.close();
+    };
+
+    return () => events.close();
   }, [activeConversationId, isGroup]);
 
   async function loadConversations(selectFirst = false) {
@@ -141,6 +198,7 @@ export function AppShell() {
       const payload = (await response.json()) as {
         conversation?: ConversationSummary;
         messages?: MockMessage[];
+        run?: { runId: string; assistantMessageId: string };
         error?: string;
       };
 
@@ -157,7 +215,27 @@ export function AppShell() {
       setView("single");
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "发送消息失败。");
-    } finally {
+    }
+  }
+
+  async function stopMessage() {
+    if (!activeConversationId) {
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/conversations/${activeConversationId}/stop`, {
+        method: "POST"
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "停止生成失败。");
+      }
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : "停止生成失败。");
       setIsSending(false);
     }
   }
@@ -278,6 +356,7 @@ export function AppShell() {
           isNewConversation={isNewConversation}
           isRunning={isSending}
           onSend={sendMessage}
+          onStop={stopMessage}
         />
       </section>
       <ContextPanel

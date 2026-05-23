@@ -105,7 +105,7 @@ function SingleContext({ conversation }: { conversation: ConversationSummary | n
           <span className="context-agent-icon"><AgentIcon agent={agent?.slug ?? "claude-code"} size={24} /></span>
           <div>
             <strong>{agent?.name ?? "等待锁定 Agent"}</strong>
-            <p>{agent ? "已锁定 · Phase 2 仅落库，不运行适配器" : "首条消息发送后锁定"}</p>
+            <p>{agent ? `已锁定 · ${conversation.status === "running" ? "运行中" : "待命"}` : "首条消息发送后锁定"}</p>
           </div>
         </div>
       </section>
@@ -114,7 +114,7 @@ function SingleContext({ conversation }: { conversation: ConversationSummary | n
         <ul className="todo-list">
           <li className="done">会话已落库</li>
           <li className="done">消息历史可刷新恢复</li>
-          <li>Phase 3 接入 SSE 与运行状态</li>
+          <li className={conversation?.status === "running" ? undefined : "done"}>SSE 与运行状态已接入</li>
         </ul>
       </section>
       <section className="context-section">

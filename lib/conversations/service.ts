@@ -4,6 +4,7 @@ import { agents, conversationAgents, conversations, messages } from "@/lib/db/sc
 import { parseAgentMentions, slugFor } from "@/lib/agents/mention";
 import type { AgentSummary } from "@/lib/agents/types";
 import type { ConversationMode, ConversationSummary, MockMessage } from "@/lib/conversations/types";
+import { startFakeAgentRun } from "@/lib/conversations/runs";
 
 type ConversationRow = typeof conversations.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
@@ -202,16 +203,22 @@ export function sendMessage(conversationId: string, content: string) {
   db.update(conversations)
     .set({
       title: conversation.title === "新建聊天" ? titleFromMessage(trimmed) : conversation.title,
-      status: "done",
+      status: "running",
       lockedAgentId: selectedAgent.id,
       updatedAt: now
     })
     .where(eq(conversations.id, conversationId))
     .run();
 
+  const run = startFakeAgentRun({
+    conversationId,
+    agent: selectedAgent
+  });
+
   return {
     conversation: getConversation(conversationId),
-    messages: listMessages(conversationId)
+    messages: listMessages(conversationId),
+    run
   };
 }
 
@@ -280,7 +287,10 @@ function toMessage(message: MessageRow, agent: AgentRow | null): MockMessage {
     author: message.authorName,
     avatar: agent ? slugFor(toAgentSummary(agent)) : undefined,
     tone: message.role === "user" ? "user" : "agent",
-    status: message.status === "running" ? "running" : message.status === "done" ? "done" : undefined,
+    status:
+      message.status === "running" || message.status === "done" || message.status === "error" || message.status === "cancelled"
+        ? message.status
+        : undefined,
     time: new Date(message.createdAt).toLocaleTimeString("zh-CN", {
       hour: "2-digit",
       minute: "2-digit"

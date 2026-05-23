@@ -11,9 +11,10 @@ type ComposerProps = {
   isNewConversation: boolean;
   isRunning: boolean;
   onSend: (content: string) => Promise<void>;
+  onStop: () => Promise<void>;
 };
 
-export function Composer({ disabled, error, isGroup, isNewConversation, isRunning, onSend }: ComposerProps) {
+export function Composer({ disabled, error, isGroup, isNewConversation, isRunning, onSend, onStop }: ComposerProps) {
   const [content, setContent] = useState("");
   const placeholder = disabled
     ? "V1 群聊只展示结构；V2 再接入 @agent 与真实分派"
@@ -26,7 +27,16 @@ export function Composer({ disabled, error, isGroup, isNewConversation, isRunnin
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
 
-    if (!content.trim() || disabled || isRunning) {
+    if (disabled) {
+      return;
+    }
+
+    if (isRunning) {
+      await onStop();
+      return;
+    }
+
+    if (!content.trim()) {
       return;
     }
 
@@ -70,7 +80,7 @@ export function Composer({ disabled, error, isGroup, isNewConversation, isRunnin
           <button
             aria-label={isRunning ? "停止生成" : "发送消息"}
             className={isRunning ? "send-button stop" : "send-button"}
-            disabled={disabled || !content.trim()}
+            disabled={disabled || (!isRunning && !content.trim())}
             type="submit"
           >
             {isRunning ? <Square size={15} /> : <ArrowUp size={17} />}
