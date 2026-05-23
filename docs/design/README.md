@@ -6,12 +6,13 @@
 
 - `要求.md`：课题原始要求和交付约束。
 - `prd初版.md`：当前产品需求文档初版。
+- `TECH_DESIGN.md`：适配器、自建 Agent 执行、Provider 多协议与消费者约束。
+- `ExecutePlan/V1-单聊完整版实施计划.md`：V1 实施计划。
 
 推荐文件：
 
 - `PRD.md`：稳定的产品需求和目标用户体验。
 - `INTERACTION.md`：信息架构、布局、用户流程和 UI 状态。
-- `TECH_DESIGN.md`：架构、数据模型、API、适配器和 Orchestrator 设计。
 - `API_CONTRACT.md`：从 UI 演示推导出的请求/响应/事件契约。
 - `REVIEW_CHECKLIST.md`：阶段验收和评审门检查清单。
 

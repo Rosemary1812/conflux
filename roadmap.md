@@ -58,20 +58,24 @@
 
 - 主线进度以本文件为准；零散问题记入 `docs/state/`。
 
-## V2：群聊与 Orchestrator
+## V2：群聊、Orchestrator 与 Provider
 
-**目标**：把 V1 已做好的群聊 UI 接上真实多 Agent 协作。
+**目标**：把 V1 已做好的群聊 UI 接上真实多 Agent 协作；落地统一 **Provider** 配置，供编排调度 Agent 接 API。
 
 **范围**：
 
 - 群聊模式：`@` 初始化、动态邀请、`ConversationAgent` 多实例。
 - 自研 `OrchestratorService`：规划 → 任务 DAG → 并行/串行调度 → 汇总。
+- **设置页 Provider（V2）**：支持多种协议（至少 `anthropic`、`openai_compatible`）；Base URL + API Key + 默认模型；CRUD 与启用/停用。
+- **OrchestratorPlanner / 调度 Agent**：自研 HTTP 客户端（**不**走 Claude Agent SDK），绑定 `openai_compatible` 等 Provider 完成规划 LLM 调用（见 `docs/design/TECH_DESIGN.md` §3.2）。
 - 消息流任务进度卡片与右侧任务分派区与真实 `Task` 状态联动。
 - 失败降级、代码冲突处理（按 PRD 优先级）。
 
 **验收标准**：
 
 - 群聊内一次用户请求可拆分给多个 Agent，结果在消息流中连贯展示。
+- **Provider**：可新增并保存至少两种协议各一条（如 Anthropic 兼容 + OpenAI 兼容）；编排服务能使用已配置的 OpenAI 兼容 Provider 完成一次规划调用。
+- **Orchestrator**：能说明 Planner 与执行 Agent 适配器分离、Planner 使用的 Provider 与内置 `@claude-code` 本机鉴权分离。
 - 答辩能说明编排流程与当前限制。
 
 ## V3：自建 Agent、Skill 与增强产物
@@ -81,13 +85,17 @@
 **范围**：
 
 - `/agent-creator`、`/skill-creator` 与 `SkillRunner`。
-- 自建 Agent：System Prompt + `permission_mode`。
+- 自建 Agent：System Prompt + `permission_mode` + 底层 `platform`；`claude_code` 执行见 `docs/design/TECH_DESIGN.md`（复用 V2 Provider，绑定须 `anthropic`）。
+- `ClaudeCodeAdapter` 自建路径：`@anthropic-ai/claude-agent-sdk` + per-run `env`；不做本地协议代理。
 - Diff 视图、版本历史、部署状态卡片等（按 PRD P2 择项）。
 
 **验收标准**：
 
-- 对话式创建一个自建 Agent，并用于单聊或群聊 `@`。
-- 至少一个内置 Skill 完整跑通创建流程。
+- 对话式创建一个自建 Agent（`/agent-creator`），并用于单聊或群聊 `@`。
+- 至少一个内置 Skill（`agent-creator`）完整跑通创建流程。
+- **自建 + Claude Code**：在 V2 已存在的 Provider 列表中，**仅能选择** `protocol = anthropic` 的项；若选 OpenAI 兼容 Provider 则拦截并提示；绑定后单聊端到端跑通（`permission_mode` 至少验证 `readonly` 与 `editable` 各一次）。
+- **内置 `@claude-code`**：单聊仍走本机 Claude Code 默认能力，行为不因自建 Agent 的 Provider 绑定而被覆盖。
+- 与 PRD §3.6.5、`TECH_DESIGN.md` 一致。
 
 ## 暂缓事项
 

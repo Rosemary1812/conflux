@@ -441,6 +441,16 @@ Skill：已更新。确认创建吗？
 - 创建完成后出现在 Agent 候选列表中：可用于新建单聊选择，也可在群聊初始化时通过 `@AgentName` 邀请参与，并被 Orchestrator 分派
 - **P1**：对已有自建 Agent 再次发送 `/agent-creator <agent_id>` 进入编辑流程
 
+#### 3.6.5 执行与 Provider 绑定（V3 自建；Provider 基础设施见 V2 / §6.5）
+
+技术细节见 **`docs/design/TECH_DESIGN.md`**。产品约束摘要：
+
+- **设置页 Provider（V2）**：支持 **多种 API 协议**（至少 Anthropic 兼容、OpenAI 兼容）；供 Orchestrator 调度 Agent、后续自建 Agent 等引用。见 §6.5。
+- **内置 Agent**（如 `@claude-code`）：本机 Claude Code 产品语义，**不覆盖** System Prompt；鉴权继承本机 CLI/OAuth，**不强制**绑定 Provider。
+- **自建 Agent + `platform = claude_code`（V3）**：通过 **Claude Agent SDK** 执行；须绑定 **`protocol = anthropic`** 的 Provider。若用户试图绑定 OpenAI 兼容 Provider，**仅在该绑定步骤拦截**并提示改用 Anthropic 风格端点（不是禁止在设置页保存 OpenAI Provider）。
+- **不做** 本地协议代理作为默认方案。
+- `platform = codex | hermes | openclaw` 的自建 Agent 走对应 `*Adapter`，**不使用** Claude Agent SDK。
+
 ---
 
 ### 3.7 Skill 与斜杠命令（P0）
@@ -522,8 +532,9 @@ Agent
 ├── description
 ├── system_prompt
 ├── platform        (claude_code | codex | hermes | openclaw | custom)
-├── platform_config (JSON, 可选覆盖：CLI 路径、工作目录、API 覆盖项等)
-├── model_name      (可选，平台内具体模型名)
+├── provider_id     (FK → Provider；builtin 为空；V3 自建 claude_code 必填且须 anthropic 协议，见 §3.6.5)
+├── platform_config (JSON, 可选覆盖：CLI 路径、工作目录等)
+├── model_name      (可选，覆盖 Provider.default_model)
 ├── tags            (JSON array)
 ├── permission_mode (readonly | editable | restricted-editable)
 ├── editable_scopes (JSON array, 可选；restricted-editable 下限制可改目录 / glob)
@@ -712,7 +723,20 @@ AgentAdapter（按 platform 选择）
 各平台自己的鉴权（本机配置文件 / 环境变量）
 ```
 
-> Orchestrator 的规划 LLM **不走上述执行 Agent 适配器**，见 §6.4。
+> Orchestrator 的规划 LLM **不走上述执行 Agent 适配器**，见 §6.4、§6.5。
+
+### 6.5 Provider 配置（V2）
+
+设置页统一管理模型 API，供 **Orchestrator 调度 Agent**（V2）与 **自建 Agent**（V3）等引用。
+
+| 协议 `protocol` | 用途（示例） |
+| --- | --- |
+| `anthropic` | Anthropic Messages API 兼容端点；**自建 Agent（`claude_code`）绑定必选此类** |
+| `openai_compatible` | OpenAI Chat Completions 兼容；**OrchestratorPlanner / 调度 Agent** 默认使用此类 |
+
+- 用户可保存 **多条、多种协议** 的 Provider（含国内厂商不同风格端点）。
+- **约束在消费者侧**：不是「设置页只能填 Anthropic」，而是「`claude_code` 自建 Agent 只能 **选用** anthropic 类 Provider」。
+- 字段：`name`、`protocol`、`base_url`、`api_key`、`default_model`、`enabled`。技术约定见 `TECH_DESIGN.md`。
 
 **鉴权策略（默认）**：
 
@@ -756,7 +780,7 @@ interface AgentAdapter {
 
 | 适配器                 | 对应平台        | 调用方式（倾向）                        | 优先级 |
 | ------------------- | ----------- | ------------------------------- | --- |
-| `ClaudeCodeAdapter` | Claude Code | 本机 CLI / 官方 SDK，继承已有登录态         | P0  |
+| `ClaudeCodeAdapter` | Claude Code | **Claude Agent SDK**（推荐）；内置 Agent 继承本机登录，自建走 Provider（§3.6.5） | P0 / V3 |
 | `CodexAdapter`      | Codex       | 本机 Codex CLI，继承 OpenAI/Codex 配置 | P0  |
 | `HermesAdapter`     | Hermes      | 按 Hermes 官方集成方式（CLI 或 API）      | P0  |
 | `OpenClawAdapter`   | OpenClaw    | 按 OpenClaw 官方集成方式               | P0  |
@@ -796,8 +820,8 @@ OrchestratorService（平台自研，非用户可选 Agent）
 
 #### OrchestratorPlanner 配置（自研子模块，≠ 执行 Agent）
 
-- P0：`OrchestratorPlanner` 通过 **自研 HTTP 客户端** 调用可配置的 OpenAI 兼容 Chat API（`.env`：`ORCHESTRATOR_LLM_BASE_URL`、`ORCHESTRATOR_LLM_API_KEY`、`ORCHESTRATOR_LLM_MODEL`）。
-- **不**在 P0/P1 通过 `ClaudeCodeAdapter` / `CodexAdapter` 代为规划；不把「已接入 Agent」当作 Orchestrator 本体。
+- V2：`OrchestratorPlanner` 通过 **自研 HTTP 客户端** 调用设置页配置的 Provider（通常为 **`openai_compatible`**）；编排/调度 Agent **不**使用 Claude Agent SDK。开发期可用 `.env` 默认值，产品态收敛到 Provider（§6.5）。
+- **不**通过 `ClaudeCodeAdapter` / `CodexAdapter` 代为规划；不把「已接入 Agent」当作 Orchestrator 本体。
 
 #### 编排 System Prompt（仅 OrchestratorPlanner，≠ 自建 Agent）
 
