@@ -14,6 +14,16 @@
 
 ## 已做
 
+- 时间：2026-05-24 10:00
+  优先级：待定
+  所属范围：UI
+  问题/目标：左侧栏会话项「三个点」操作菜单展开后，点击页面其他区域不会自动收起，必须再次点击该按钮才能关闭。
+  解决方案：为 `ConversationMenu` 增加 click-outside 监听——在菜单打开时注册 document 级 `mousedown` 事件，若点击目标不在菜单容器（含触发按钮与 popover）内，则将 `openMenuId` 置为 `null`；组件卸载或菜单关闭时移除监听。
+  涉及修改文件：`components/shell/ConversationSidebar.tsx`
+  验收标准：点击「三个点」展开菜单后，点击侧边栏其他区域、主聊天区或页面任意非菜单区域，菜单自动收起；点击菜单内按钮（编辑名称、归档、删除）行为不变；再次点击同一「三个点」仍可 toggle 开关。
+  完成时间：2026-05-24 10:15
+  验证结果：`ConversationMenu` 增加 `wrapRef` 与 `mousedown` 监听；`npm run typecheck` 通过。
+
 - 时间：2026-05-23 14:30
   优先级：P2
   所属范围：UI

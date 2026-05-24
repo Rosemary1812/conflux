@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -154,6 +154,7 @@ export function ConversationSidebar({
                     onArchiveConversation(conversation.id, true);
                     setOpenMenuId(null);
                   }}
+                  onClose={() => setOpenMenuId(null)}
                   onRename={() => startRename(conversation)}
                   onRequestDelete={() => {
                     setDeleteTargetId(conversation.id);
@@ -227,6 +228,7 @@ export function ConversationSidebar({
                         onArchiveConversation(conversation.id, false);
                         setOpenMenuId(null);
                       }}
+                      onClose={() => setOpenMenuId(null)}
                       onRename={() => startRename(conversation)}
                       onRequestDelete={() => {
                         setDeleteTargetId(conversation.id);
@@ -270,6 +272,7 @@ function ConversationMenu({
   conversation,
   isOpen,
   onArchive,
+  onClose,
   onRename,
   onRequestDelete,
   onToggle
@@ -278,12 +281,35 @@ function ConversationMenu({
   conversation: ConversationSummary;
   isOpen: boolean;
   onArchive: () => void;
+  onClose: () => void;
   onRename: () => void;
   onRequestDelete: () => void;
   onToggle: () => void;
 }) {
+  const wrapRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (wrapRef.current?.contains(target)) {
+        return;
+      }
+      onClose();
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isOpen, onClose]);
+
   return (
-    <span className="conversation-menu-wrap">
+    <span className="conversation-menu-wrap" ref={wrapRef}>
       <button
         aria-label={`${conversation.title} 更多操作`}
         className="conversation-menu"
