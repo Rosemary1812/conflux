@@ -1,4 +1,4 @@
-export type AgentPlatform = "claude_code" | "codex" | "hermes" | "openclaw";
+export type AgentPlatform = "claude_code" | "codex" | "hermes" | "opencode";
 
 export type AgentSummary = {
   id: string;

@@ -12,7 +12,7 @@
 | System Prompt | **不覆盖** Claude Code 等产品默认 | 用户定义的 `system_prompt` |
 | 权限 | 跟随本机 Agent 运行时默认 / 用户本机配置 | `permission_mode` + 平台映射 |
 | API / 鉴权 | 继承本机 CLI 登录态（OAuth / 官方 config） | `platform = claude_code` 时绑定 **Provider**，且该 Provider 须为 **Anthropic 兼容**（见 §3.3）；其他平台走各自适配器 |
-| 执行实现 | `ClaudeCodeAdapter`（推荐 Agent SDK，profile=`builtin`） | 按 `platform` 选适配器；`claude_code` 用 Agent SDK，profile=`custom` |
+| 执行实现 | V1 当前通过本机 CLI 适配器调用；`ClaudeCodeAdapter` 后续可切到 Agent SDK | 按 `platform` 选适配器；`claude_code` 用 Agent SDK，profile=`custom` |
 
 **原则**：内置 Agent 不是「SDK 这个框架」；SDK 仅是 Conflux 在 Node 里调用 Claude Code 运行时的方式。IM 里用户对话的对象始终是 Agent 产品/自建人格，不是 SDK 本身。
 
@@ -126,7 +126,7 @@ Agent（V3 补充）
 | --- | --- |
 | `codex` | `CodexAdapter`（本机 CLI/API），**不用** Claude Agent SDK |
 | `hermes` | `HermesAdapter` |
-| `openclaw` | `OpenClawAdapter` |
+| `opencode` | `OpenCodeAdapter`（V1 使用 `opencode run --format json --dir <workspace> <prompt>`；CLI 未加入 PATH 时可用 `AGENTHUB_OPENCODE_COMMAND` 指定路径） |
 
 ## 6. 参考
 

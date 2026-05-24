@@ -4,7 +4,7 @@ import { agents, conversationAgents, conversations, messages } from "@/lib/db/sc
 import { parseAgentMentions, slugFor } from "@/lib/agents/mention";
 import type { AgentSummary } from "@/lib/agents/types";
 import type { ConversationMode, ConversationSummary, MockMessage } from "@/lib/conversations/types";
-import { startFakeAgentRun } from "@/lib/conversations/runs";
+import { startAgentRun } from "@/lib/conversations/runs";
 
 type ConversationRow = typeof conversations.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
@@ -27,6 +27,7 @@ export function listAgents(): AgentSummary[] {
   return getDb()
     .select()
     .from(agents)
+    .where(eq(agents.enabled, true))
     .orderBy(asc(agents.name))
     .all()
     .map(toAgentSummary);
@@ -210,10 +211,9 @@ export function sendMessage(conversationId: string, content: string) {
     .where(eq(conversations.id, conversationId))
     .run();
 
-  const run = startFakeAgentRun({
+  const run = startAgentRun({
     conversationId,
-    agent: selectedAgent,
-    userContent: trimmed
+    agent: selectedAgent
   });
 
   return {

@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
-import { runFakeAdapter } from "@/lib/adapters/fake";
+import { getAdapter } from "@/lib/adapters/registry";
+import type { AdapterMessage, AgentEvent } from "@/lib/adapters/types";
 import { getDb } from "@/lib/db/client";
 import { agentRuns, agents, conversations, messages } from "@/lib/db/schema";
 import { publishConversationEvent } from "@/lib/conversations/stream-bus";
@@ -10,10 +11,9 @@ const activeRuns = new Map<string, AbortController>();
 type StartRunParams = {
   conversationId: string;
   agent: AgentSummary;
-  userContent: string;
 };
 
-export function startFakeAgentRun({ conversationId, agent, userContent }: StartRunParams) {
+export function startAgentRun({ conversationId, agent }: StartRunParams) {
   const now = Date.now();
   const runId = crypto.randomUUID();
   const assistantMessageId = crypto.randomUUID();
@@ -53,11 +53,11 @@ export function startFakeAgentRun({ conversationId, agent, userContent }: StartR
   activeRuns.set(runId, controller);
   publishConversationEvent(conversationId, { type: "run_status", runId, status: "running" });
 
-  void drainFakeRun({
+  void drainAgentRun({
     runId,
     conversationId,
     messageId: assistantMessageId,
-    shouldFail: shouldTriggerFakeError(userContent),
+    agent,
     signal: controller.signal
   });
 
@@ -84,49 +84,32 @@ export function stopConversationRun(conversationId: string) {
   return run.id;
 }
 
-async function drainFakeRun({
+async function drainAgentRun({
   runId,
   conversationId,
   messageId,
-  shouldFail,
+  agent,
   signal
 }: {
   runId: string;
   conversationId: string;
   messageId: string;
-  shouldFail: boolean;
+  agent: AgentSummary;
   signal: AbortSignal;
 }) {
   let content = "";
+  const adapter = getAdapter(agent.platform);
 
   try {
-    for await (const event of runFakeAdapter({ shouldFail, signal })) {
-      if (event.type === "text_delta") {
-        content += event.delta;
-        getDb().update(messages).set({ content }).where(eq(messages.id, messageId)).run();
-        publishConversationEvent(conversationId, {
-          type: "message_delta",
-          messageId,
-          delta: event.delta
-        });
-      }
-
-      if (event.type === "message_done") {
-        const now = Date.now();
-        getDb().update(messages).set({ status: "done" }).where(eq(messages.id, messageId)).run();
-        getDb()
-          .update(agentRuns)
-          .set({ status: "done", finishedAt: now, updatedAt: now })
-          .where(eq(agentRuns.id, runId))
-          .run();
-        getDb()
-          .update(conversations)
-          .set({ status: "done", updatedAt: now })
-          .where(eq(conversations.id, conversationId))
-          .run();
-        publishConversationEvent(conversationId, { type: "message_status", messageId, status: "done" });
-        publishConversationEvent(conversationId, { type: "run_status", runId, status: "done" });
-      }
+    for await (const event of adapter.run({
+      runId,
+      conversationId,
+      workspacePath: process.cwd(),
+      messages: getAdapterMessages(conversationId),
+      attachments: [],
+      signal
+    })) {
+      content = handleAgentEvent({ event, content, conversationId, messageId, runId });
     }
   } catch (error) {
     if (signal.aborted) {
@@ -134,31 +117,134 @@ async function drainFakeRun({
       return;
     }
 
-    const message = error instanceof Error ? error.message : "运行失败。";
-    const now = Date.now();
-    getDb().update(messages).set({ status: "error" }).where(eq(messages.id, messageId)).run();
-    getDb()
-      .update(agentRuns)
-      .set({ status: "error", error: message, finishedAt: now, updatedAt: now })
-      .where(eq(agentRuns.id, runId))
-      .run();
-    getDb()
-      .update(conversations)
-      .set({ status: "done", updatedAt: now })
-      .where(eq(conversations.id, conversationId))
-      .run();
-    publishConversationEvent(conversationId, { type: "message_status", messageId, status: "error", error: message });
-    publishConversationEvent(conversationId, { type: "run_status", runId, status: "error", error: message });
+    markRunErrored({
+      conversationId,
+      runId,
+      messageId,
+      error: error instanceof Error ? error.message : "运行失败。"
+    });
   } finally {
     activeRuns.delete(runId);
   }
 }
 
-function shouldTriggerFakeError(content: string) {
-  return /(^|\s)\/fake-error(\s|$)|模拟错误|触发错误/i.test(content);
+function handleAgentEvent({
+  event,
+  content,
+  conversationId,
+  messageId,
+  runId
+}: {
+  event: AgentEvent;
+  content: string;
+  conversationId: string;
+  messageId: string;
+  runId: string;
+}) {
+  if (event.type === "text_delta") {
+    const nextContent = `${content}${event.delta}`;
+    getDb().update(messages).set({ content: nextContent }).where(eq(messages.id, messageId)).run();
+    publishConversationEvent(conversationId, {
+      type: "message_delta",
+      messageId,
+      delta: event.delta
+    });
+    return nextContent;
+  }
+
+  if (event.type === "message_done") {
+    markRunDone(conversationId, runId, messageId);
+  }
+
+  if (event.type === "message_cancelled") {
+    markRunCancelled(conversationId, runId, messageId);
+  }
+
+  if (event.type === "message_error") {
+    markRunErrored({ conversationId, runId, messageId, error: event.error });
+  }
+
+  return content;
+}
+
+function getAdapterMessages(conversationId: string): AdapterMessage[] {
+  return getDb()
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId))
+    .orderBy(messages.createdAt)
+    .all()
+    .map((message) => ({
+      role: message.role,
+      content: message.content
+    }));
+}
+
+function markRunDone(conversationId: string, runId: string, messageId: string) {
+  if (!isRunActive(runId)) {
+    return;
+  }
+
+  const now = Date.now();
+  getDb().update(messages).set({ status: "done" }).where(eq(messages.id, messageId)).run();
+  getDb()
+    .update(agentRuns)
+    .set({ status: "done", finishedAt: now, updatedAt: now })
+    .where(eq(agentRuns.id, runId))
+    .run();
+  getDb()
+    .update(conversations)
+    .set({ status: "done", updatedAt: now })
+    .where(eq(conversations.id, conversationId))
+    .run();
+  publishConversationEvent(conversationId, { type: "message_status", messageId, status: "done" });
+  publishConversationEvent(conversationId, { type: "run_status", runId, status: "done" });
+}
+
+function markRunErrored({
+  conversationId,
+  runId,
+  messageId,
+  error
+}: {
+  conversationId: string;
+  runId: string;
+  messageId: string;
+  error: string;
+}) {
+  if (!isRunActive(runId)) {
+    return;
+  }
+
+  const now = Date.now();
+  const currentMessage = getDb().select().from(messages).where(eq(messages.id, messageId)).get();
+  getDb()
+    .update(messages)
+    .set({
+      status: "error",
+      content: currentMessage?.content ? currentMessage.content : `运行失败：${error}`
+    })
+    .where(eq(messages.id, messageId))
+    .run();
+  getDb()
+    .update(agentRuns)
+    .set({ status: "error", error, finishedAt: now, updatedAt: now })
+    .where(eq(agentRuns.id, runId))
+    .run();
+  getDb()
+    .update(conversations)
+    .set({ status: "done", updatedAt: now })
+    .where(eq(conversations.id, conversationId))
+    .run();
+  publishConversationEvent(conversationId, { type: "message_status", messageId, status: "error", error });
+  publishConversationEvent(conversationId, { type: "run_status", runId, status: "error", error });
 }
 
 function markRunCancelled(conversationId: string, runId: string, messageId?: string) {
+  if (!isRunActive(runId)) {
+    return;
+  }
+
   const now = Date.now();
   const db = getDb();
   const assistantMessageId =
@@ -191,4 +277,9 @@ function markRunCancelled(conversationId: string, runId: string, messageId?: str
     .where(eq(conversations.id, conversationId))
     .run();
   publishConversationEvent(conversationId, { type: "run_status", runId, status: "cancelled" });
+}
+
+function isRunActive(runId: string) {
+  const run = getDb().select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
+  return run?.status === "running" || run?.status === "pending";
 }

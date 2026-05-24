@@ -1,4 +1,4 @@
-import { ClaudeCode, Codex, HermesAgent, OpenClaw } from "@lobehub/icons";
+import { ClaudeCode, Codex, HermesAgent, OpenCode } from "@lobehub/icons";
 
 type AgentIconProps = {
   agent: string;
@@ -20,8 +20,8 @@ export function AgentIcon({ agent, size = 24 }: AgentIconProps) {
     return <HermesAgent.Avatar size={size} />;
   }
 
-  if (normalized === "openclaw" || normalized === "open-claw") {
-    return <OpenClaw.Color size={size} />;
+  if (normalized === "opencode" || normalized === "open-code") {
+    return <OpenCode.Avatar size={size} />;
   }
 
   if (normalized === "orchestrator" || normalized === "o") {

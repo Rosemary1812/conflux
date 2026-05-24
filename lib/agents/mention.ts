@@ -13,8 +13,9 @@ const aliases: Record<string, string> = {
   "claude-code": "claude-code",
   codex: "codex",
   hermes: "hermes",
-  openclaw: "openclaw",
-  open_claw: "openclaw"
+  opencode: "opencode",
+  open_code: "opencode",
+  "open-code": "opencode"
 };
 
 export function parseAgentMentions(content: string, agents: AgentSummary[]): MentionParseResult {

@@ -14,7 +14,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { mockProviders, type MockProvider } from "@/lib/mock/providers";
 type SettingsModalProps = {
   onClose: () => void;
@@ -118,16 +118,44 @@ export function SettingsModal({ onClose, open }: SettingsModalProps) {
 }
 
 function AgentsPanel() {
+  const [health, setHealth] = useState<Record<string, { ok: boolean; message: string }>>({});
+  const [checking, setChecking] = useState(false);
+
+  async function refreshHealth() {
+    setChecking(true);
+
+    try {
+      const response = await fetch("/api/agents/health");
+      const payload = (await response.json()) as {
+        health?: Array<{ platform: string; ok: boolean; message: string }>;
+      };
+
+      setHealth(
+        Object.fromEntries(
+          (payload.health ?? []).map((item) => [item.platform, { ok: item.ok, message: item.message }])
+        )
+      );
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshHealth();
+  }, []);
+
   return (
     <section>
       <h3>本机 Agent 连接</h3>
-      <p className="desc">这里只展示连接状态；真实 healthcheck 在 Phase 4 接入。</p>
+      <p className="desc">Phase 4 通过本机 CLI healthcheck 展示真实连接状态。</p>
       <div className="settings-card">
-        <button className="primary-button" type="button">重新检测全部</button>
-        <HealthRow detail="已登录" name="Claude Code" ok />
-        <HealthRow detail="配置已找到" name="Codex" ok />
-        <HealthRow detail="缺少配置" name="Hermes" />
-        <HealthRow detail="等待本机安装" name="OpenClaw" />
+        <button className="primary-button" disabled={checking} onClick={refreshHealth} type="button">
+          {checking ? "检测中..." : "重新检测全部"}
+        </button>
+        <HealthRow detail={health.claude_code?.message ?? "等待检测"} name="Claude Code" ok={health.claude_code?.ok} />
+        <HealthRow detail={health.codex?.message ?? "等待检测"} name="Codex" ok={health.codex?.ok} />
+        <HealthRow detail={health.hermes?.message ?? "等待检测"} name="Hermes" ok={health.hermes?.ok} />
+        <HealthRow detail={health.opencode?.message ?? "等待检测"} name="OpenCode" ok={health.opencode?.ok} />
       </div>
     </section>
   );

@@ -15,7 +15,6 @@ export function AppShell() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MockMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
@@ -24,6 +23,7 @@ export function AppShell() {
   const isGroup = view === "group" || view === "new-group";
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
+  const isActiveConversationRunning = activeConversation?.status === "running";
   const isNewConversation =
     view === "new-single" || view === "new-group" || (!activeConversation?.lockedAgent && messages.length === 0);
 
@@ -98,7 +98,16 @@ export function AppShell() {
         return;
       }
 
-      setIsSending(payload.status === "running");
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeConversationId
+            ? {
+                ...conversation,
+                status: payload.status === "running" ? "running" : "done"
+              }
+            : conversation
+        )
+      );
 
       if (payload.status !== "running") {
         void loadConversations();
@@ -183,8 +192,6 @@ export function AppShell() {
     if (isGroup) {
       return;
     }
-
-    setIsSending(true);
     setError(null);
 
     try {
@@ -252,7 +259,6 @@ export function AppShell() {
       }
     } catch (stopError) {
       setError(stopError instanceof Error ? stopError.message : "停止生成失败。");
-      setIsSending(false);
     }
   }
 
@@ -370,7 +376,7 @@ export function AppShell() {
           error={error}
           isGroup={isGroup}
           isNewConversation={isNewConversation}
-          isRunning={isSending}
+          isRunning={isActiveConversationRunning}
           onSend={sendMessage}
           onStop={stopMessage}
         />

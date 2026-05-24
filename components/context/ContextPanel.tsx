@@ -72,7 +72,7 @@ function NewConversationContext({ isGroup }: { isGroup: boolean }) {
           <li><AgentIcon agent="claude-code" size={18} />Claude Code</li>
           <li><AgentIcon agent="codex" size={18} />Codex</li>
           <li><AgentIcon agent="hermes" size={18} />Hermes</li>
-          <li><AgentIcon agent="openclaw" size={18} />OpenClaw</li>
+          <li><AgentIcon agent="opencode" size={18} />OpenCode</li>
         </ul>
       </section>
     </div>

@@ -16,7 +16,7 @@
 
 - Next.js Route Handlers：会话 / 消息 CRUD；SSE 推送 Agent 流式事件。
 - SQLite（Drizzle）：`Conversation`（V1 创建与调度仅 `single`）、`Message`、`Agent`。
-- `lib/adapters/` 统一契约；接通 **至少 1 个** 真实外部 Agent，推荐 **2 个**（如 Claude Code、Codex）。
+- `lib/adapters/` 统一契约；接通 **至少 1 个** 真实外部 Agent，推荐 **2 个**（如 Claude Code、Codex），Phase 4 当前目标为 Claude Code、Codex、Hermes、OpenCode。
 - 流程：新建单聊 → 选择 Agent → 发送消息 → 适配器 `run()` → SSE → 落库 → 前端渲染。
 - 适配器 `healthcheck`；CLI 未就绪时在 UI 给出提示。
 

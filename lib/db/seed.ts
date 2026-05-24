@@ -1,4 +1,5 @@
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { eq } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { agents } from "@/lib/db/schema";
 
@@ -25,11 +26,11 @@ const builtinAgents = [
     description: "Hermes agent adapter placeholder."
   },
   {
-    id: "agent_openclaw",
-    slug: "openclaw",
-    name: "OpenClaw",
-    platform: "openclaw",
-    description: "OpenClaw agent adapter placeholder."
+    id: "agent_opencode",
+    slug: "opencode",
+    name: "OpenCode",
+    platform: "opencode",
+    description: "OpenCode CLI adapter for V1 single-chat execution."
   }
 ] as const;
 
@@ -56,4 +57,12 @@ export function seedAgents(db: BetterSQLite3Database<typeof schema>) {
       })
       .run();
   }
+
+  db.update(agents)
+    .set({
+      enabled: false,
+      updatedAt: now
+    })
+    .where(eq(agents.slug, "openclaw"))
+    .run();
 }

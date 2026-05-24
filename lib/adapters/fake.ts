@@ -1,3 +1,5 @@
+import type { AgentAdapter } from "@/lib/adapters/types";
+
 export type FakeAgentEvent =
   | { type: "text_delta"; delta: string }
   | { type: "message_done" };
@@ -26,6 +28,23 @@ export async function* runFakeAdapter({
   }
 
   yield { type: "message_done" };
+}
+
+export const fakeAdapter: AgentAdapter = {
+  platform: "claude_code",
+  async healthcheck() {
+    return { ok: true, message: "Fake adapter 可用。" };
+  },
+  run(params) {
+    return runFakeAdapter({
+      shouldFail: params.messages.some((message) => shouldTriggerFakeError(message.content)),
+      signal: params.signal
+    });
+  }
+};
+
+function shouldTriggerFakeError(content: string) {
+  return /(^|\s)\/fake-error(\s|$)|模拟错误|触发错误/i.test(content);
 }
 
 function delay(ms: number, signal: AbortSignal) {

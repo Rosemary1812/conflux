@@ -52,7 +52,7 @@ export function Composer({ disabled, error, isGroup, isNewConversation, isRunnin
       </div>
       <form className="composer-shell" onSubmit={handleSubmit}>
         <textarea
-          disabled={disabled || isRunning}
+          disabled={disabled}
           onChange={(event) => setContent(event.target.value)}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
