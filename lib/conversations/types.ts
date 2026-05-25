@@ -9,6 +9,8 @@ export type ConversationSummary = {
   preview: string;
   status: "running" | "done" | "preview" | "empty";
   avatar: string;
+  workspacePath: string;
+  artifacts?: ConversationArtifact[];
   lockedAgent?: {
     id: string;
     slug: string;
@@ -29,6 +31,8 @@ export type MockMessage = {
   status?: "running" | "done" | "preview" | "error" | "cancelled";
   time?: string;
   body: string;
+  attachments?: MessageAttachment[];
+  artifacts?: ConversationArtifact[];
   code?: string;
   artifact?: {
     title: string;
@@ -41,4 +45,28 @@ export type MockMessage = {
     title: string;
     status: string;
   }>;
+};
+
+export type MessageAttachment = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  path: string;
+};
+
+export type AttachmentReference = {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  path: string;
+  allowExternal?: boolean;
+};
+
+export type ConversationArtifact = {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  path?: string | null;
 };

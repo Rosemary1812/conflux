@@ -47,6 +47,7 @@ function migrate(database: Database.Database) {
       title TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('empty', 'running', 'done', 'preview')),
       locked_agent_id TEXT REFERENCES agents(id),
+      workspace_path TEXT NOT NULL DEFAULT '',
       archived_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -70,6 +71,17 @@ function migrate(database: Database.Database) {
       agent_id TEXT REFERENCES agents(id),
       content TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'done' CHECK (status IN ('pending', 'running', 'done', 'error', 'cancelled')),
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS message_attachments (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
 
@@ -100,9 +112,13 @@ function migrate(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS messages_conversation_created_idx
       ON messages(conversation_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS message_attachments_message_idx
+      ON message_attachments(message_id);
   `);
 
   ensureColumn(database, "conversations", "archived_at", "INTEGER");
+  ensureColumn(database, "conversations", "workspace_path", "TEXT NOT NULL DEFAULT ''");
 }
 
 function ensureColumn(database: Database.Database, table: string, column: string, definition: string) {

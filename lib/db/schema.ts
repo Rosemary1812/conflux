@@ -23,6 +23,7 @@ export const conversations = sqliteTable("conversations", {
   title: text("title").notNull(),
   status: text("status", { enum: ["empty", "running", "done", "preview"] }).notNull(),
   lockedAgentId: text("locked_agent_id").references(() => agents.id),
+  workspacePath: text("workspace_path").notNull().default(""),
   archivedAt: integer("archived_at"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
@@ -62,6 +63,21 @@ export const messages = sqliteTable("messages", {
   status: text("status", { enum: ["pending", "running", "done", "error", "cancelled"] })
     .notNull()
     .default("done"),
+  createdAt: integer("created_at").notNull()
+});
+
+export const messageAttachments = sqliteTable("message_attachments", {
+  id: text("id").primaryKey(),
+  messageId: text("message_id")
+    .notNull()
+    .references(() => messages.id, { onDelete: "cascade" }),
+  conversationId: text("conversation_id")
+    .notNull()
+    .references(() => conversations.id, { onDelete: "cascade" }),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  size: integer("size").notNull(),
+  storagePath: text("storage_path").notNull(),
   createdAt: integer("created_at").notNull()
 });
 
