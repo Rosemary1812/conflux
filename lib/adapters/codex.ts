@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentEvent, AdapterRunParams } from "@/lib/adapters/types";
+import { formatAttachmentContext, type AgentAdapter, type AgentEvent, type AdapterRunParams } from "@/lib/adapters/types";
 import { commandExists, runProcess } from "@/lib/adapters/process-runner";
 
 const codexCommand = process.platform === "win32" ? "codex.cmd" : "codex";
@@ -61,7 +61,7 @@ async function* runCodex(params: AdapterRunParams): AsyncIterable<AgentEvent> {
     ],
     {
       cwd: params.workspacePath,
-      input: buildPrompt(params.messages),
+      input: buildPrompt(params),
       shell: process.platform === "win32",
       signal: params.signal,
       timeoutMs: 10 * 60 * 1000,
@@ -125,15 +125,19 @@ async function* runCodex(params: AdapterRunParams): AsyncIterable<AgentEvent> {
   }
 }
 
-function buildPrompt(messages: AdapterRunParams["messages"]) {
-  const recentMessages = messages.slice(-12);
+function buildPrompt(params: AdapterRunParams) {
+  const recentMessages = params.messages.slice(-12);
+  const attachmentContext = formatAttachmentContext(params.attachments);
 
-  return recentMessages
+  return [
+    recentMessages
     .map((message) => {
       const role = message.role === "assistant" ? "Assistant" : message.role === "user" ? "User" : "System";
       return `${role}: ${message.content}`;
     })
-    .join("\n\n");
+      .join("\n\n"),
+    attachmentContext ? `\n\nUser attachments:\n${attachmentContext}` : ""
+  ].join("");
 }
 
 function eventFromCodexLine(line: string, emitted: boolean): AgentEvent | { type: "empty" } {

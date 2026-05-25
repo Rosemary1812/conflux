@@ -1,7 +1,10 @@
 import { and, asc, desc, eq } from "drizzle-orm";
+import fs from "node:fs";
+import path from "node:path";
 import { getDb } from "@/lib/db/client";
-import { agents, conversationAgents, conversations, messages } from "@/lib/db/schema";
+import { agents, artifacts, conversationAgents, conversations, messageAttachments, messages } from "@/lib/db/schema";
 import { parseAgentMentions, slugFor } from "@/lib/agents/mention";
+import type { AdapterAttachment } from "@/lib/adapters/types";
 import type { AgentSummary } from "@/lib/agents/types";
 import type { ConversationMode, ConversationSummary, MockMessage } from "@/lib/conversations/types";
 import { startAgentRun } from "@/lib/conversations/runs";
@@ -9,9 +12,16 @@ import { startAgentRun } from "@/lib/conversations/runs";
 type ConversationRow = typeof conversations.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
 type MessageRow = typeof messages.$inferSelect;
+type MessageAttachmentRow = typeof messageAttachments.$inferSelect;
+type ArtifactRow = typeof artifacts.$inferSelect;
 type UpdateConversationInput = {
   title?: string;
   archived?: boolean;
+  workspacePath?: string;
+};
+type CreateConversationInput = {
+  mode?: ConversationMode;
+  workspacePath?: string;
 };
 
 export class ApiError extends Error {
@@ -33,7 +43,9 @@ export function listAgents(): AgentSummary[] {
     .map(toAgentSummary);
 }
 
-export function createConversation(mode: ConversationMode = "single") {
+export function createConversation(input: CreateConversationInput = {}) {
+  const mode = input.mode ?? "single";
+
   if (mode === "group") {
     throw new ApiError("V1 后端只允许创建 single 会话；群聊保持静态 UI。", 400);
   }
@@ -44,6 +56,7 @@ export function createConversation(mode: ConversationMode = "single") {
     mode,
     title: "新建聊天",
     status: "empty",
+    workspacePath: input.workspacePath ? normalizeWorkspacePath(input.workspacePath) : defaultWorkspacePath(),
     createdAt: now,
     updatedAt: now
   };
@@ -64,7 +77,9 @@ export function listConversations(): ConversationSummary[] {
     .orderBy(desc(conversations.updatedAt))
     .all();
 
-  return rows.map(({ conversation, agent }) => toConversationSummary(conversation, agent));
+  return rows
+    .filter(({ conversation }) => conversation.status !== "empty" || Boolean(conversation.lockedAgentId))
+    .map(({ conversation, agent }) => toConversationSummary(conversation, agent));
 }
 
 export function getConversation(id: string) {
@@ -115,7 +130,11 @@ export function updateConversation(id: string, input: UpdateConversationInput) {
     updates.archivedAt = input.archived ? now : null;
   }
 
-  if (updates.title === undefined && input.archived === undefined) {
+  if (input.workspacePath !== undefined) {
+    updates.workspacePath = normalizeWorkspacePath(input.workspacePath);
+  }
+
+  if (updates.title === undefined && input.archived === undefined && updates.workspacePath === undefined) {
     throw new ApiError("没有可更新的会话字段。", 400);
   }
 
@@ -149,10 +168,18 @@ export function listMessages(conversationId: string): MockMessage[] {
     .map(({ message, agent }) => toMessage(message, agent));
 }
 
-export function sendMessage(conversationId: string, content: string) {
+export type IncomingAttachment = {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  path: string;
+  allowExternal?: boolean;
+};
+
+export function sendMessage(conversationId: string, content: string, incomingAttachments: IncomingAttachment[] = []) {
   const trimmed = content.trim();
 
-  if (!trimmed) {
+  if (!trimmed && incomingAttachments.length === 0) {
     throw new ApiError("消息不能为空。", 400);
   }
 
@@ -201,6 +228,14 @@ export function sendMessage(conversationId: string, content: string) {
     })
     .run();
 
+  const storedAttachments = storeMessageAttachments({
+    conversationId,
+    messageId,
+    attachments: incomingAttachments,
+    workspacePath: conversation.workspacePath || defaultWorkspacePath(),
+    now
+  });
+
   db.update(conversations)
     .set({
       title: conversation.title === "新建聊天" ? titleFromMessage(trimmed) : conversation.title,
@@ -213,12 +248,68 @@ export function sendMessage(conversationId: string, content: string) {
 
   const run = startAgentRun({
     conversationId,
-    agent: selectedAgent
+    agent: selectedAgent,
+    workspacePath: conversation.workspacePath || defaultWorkspacePath(),
+    attachments: storedAttachments.map(toAdapterAttachment)
   });
 
   return {
     conversation: getConversation(conversationId),
     messages: listMessages(conversationId),
+    run
+  };
+}
+
+export function regenerateMessage(messageId: string) {
+  const message = getDb().select().from(messages).where(eq(messages.id, messageId)).get();
+
+  if (!message) {
+    throw new ApiError("消息不存在。", 404);
+  }
+
+  if (message.role !== "assistant") {
+    throw new ApiError("只能重新生成 Agent 回复。", 400);
+  }
+
+  if (message.status === "running") {
+    throw new ApiError("当前回复仍在生成中。", 400);
+  }
+
+  const conversation = ensureConversation(message.conversationId);
+
+  if (conversation.mode !== "single") {
+    throw new ApiError("V1 群聊不支持重新生成。", 400);
+  }
+
+  const existingLock = getLockedAgent(message.conversationId);
+
+  if (!existingLock || message.agentId !== existingLock.id) {
+    throw new ApiError("只能重新生成当前锁定 Agent 的回复。", 400);
+  }
+
+  const latestAssistant = getDb()
+    .select()
+    .from(messages)
+    .where(and(eq(messages.conversationId, message.conversationId), eq(messages.role, "assistant")))
+    .orderBy(desc(messages.createdAt))
+    .get();
+
+  if (latestAssistant?.id !== messageId) {
+    throw new ApiError("当前只支持重新生成最近一条 Agent 回复。", 400);
+  }
+
+  getDb().delete(messages).where(eq(messages.id, messageId)).run();
+
+  const run = startAgentRun({
+    conversationId: message.conversationId,
+    agent: existingLock,
+    workspacePath: conversation.workspacePath || defaultWorkspacePath(),
+    attachments: []
+  });
+
+  return {
+    conversation: getConversation(message.conversationId),
+    messages: listMessages(message.conversationId),
     run
   };
 }
@@ -276,9 +367,30 @@ function toConversationSummary(conversation: ConversationRow, agent: AgentRow | 
     preview: agent ? `${agent.name} 已锁定` : "等待首条消息 @ 一个 Agent",
     status: conversation.status,
     avatar: agent ? slugFor(toAgentSummary(agent)) : "claude-code",
+    workspacePath: conversation.workspacePath || defaultWorkspacePath(),
+    artifacts: listConversationArtifacts(conversation.id).map(toConversationArtifact),
     lockedAgent: agent ? toAgentSummary(agent) : null,
     archivedAt: conversation.archivedAt,
     updatedAt: conversation.updatedAt
+  };
+}
+
+function listConversationArtifacts(conversationId: string) {
+  return getDb()
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.conversationId, conversationId))
+    .orderBy(desc(artifacts.createdAt))
+    .all();
+}
+
+function toConversationArtifact(artifact: ArtifactRow) {
+  return {
+    id: artifact.id,
+    type: artifact.type,
+    title: artifact.title,
+    description: artifact.description,
+    path: artifact.path
   };
 }
 
@@ -296,8 +408,28 @@ function toMessage(message: MessageRow, agent: AgentRow | null): MockMessage {
       hour: "2-digit",
       minute: "2-digit"
     }),
-    body: message.content
+    body: message.content,
+    attachments: getMessageAttachments(message.id).map(toPublicAttachment),
+    artifacts: getMessageArtifacts(message.id).map(toConversationArtifact)
   };
+}
+
+function getMessageAttachments(messageId: string) {
+  return getDb()
+    .select()
+    .from(messageAttachments)
+    .where(eq(messageAttachments.messageId, messageId))
+    .orderBy(asc(messageAttachments.createdAt))
+    .all();
+}
+
+function getMessageArtifacts(messageId: string) {
+  return getDb()
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.messageId, messageId))
+    .orderBy(asc(artifacts.createdAt))
+    .all();
 }
 
 function toAgentSummary(agent: AgentRow): AgentSummary {
@@ -312,4 +444,127 @@ function toAgentSummary(agent: AgentRow): AgentSummary {
 
 function titleFromMessage(content: string) {
   return content.replace(/@[a-zA-Z0-9][a-zA-Z0-9_-]*/g, "").trim().slice(0, 34) || "新建聊天";
+}
+
+function defaultWorkspacePath() {
+  return process.cwd();
+}
+
+function normalizeWorkspacePath(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    throw new ApiError("工作区路径不能为空。", 400);
+  }
+
+  const normalized = path.resolve(trimmed);
+
+  if (!fs.existsSync(normalized)) {
+    throw new ApiError("工作区路径不存在。", 400);
+  }
+
+  if (!fs.statSync(normalized).isDirectory()) {
+    throw new ApiError("工作区路径必须是目录。", 400);
+  }
+
+  return normalized;
+}
+
+function storeMessageAttachments({
+  conversationId,
+  messageId,
+  attachments,
+  workspacePath,
+  now
+}: {
+  conversationId: string;
+  messageId: string;
+  attachments: IncomingAttachment[];
+  workspacePath: string;
+  now: number;
+}) {
+  if (attachments.length === 0) {
+    return [];
+  }
+
+  if (attachments.length > 8) {
+    throw new ApiError("单条消息最多引用 8 个附件。", 400);
+  }
+
+  const rows: Array<typeof messageAttachments.$inferInsert> = attachments.map((attachment, index) => {
+    const id = crypto.randomUUID();
+    const filePath = normalizeAttachmentPath(attachment, workspacePath);
+
+    return {
+      id,
+      conversationId,
+      messageId,
+      fileName: sanitizeFileName(attachment.fileName || path.basename(filePath)),
+      mimeType: attachment.mimeType || "application/octet-stream",
+      size: attachment.size || fs.statSync(filePath).size,
+      storagePath: filePath,
+      createdAt: now + index
+    };
+  });
+
+  getDb().insert(messageAttachments).values(rows).run();
+  return rows;
+}
+
+function sanitizeFileName(fileName: string) {
+  return path.basename(fileName).replace(/[<>:"/\\|?*\x00-\x1F]/g, "_") || "attachment";
+}
+
+function normalizeAttachmentPath(attachment: IncomingAttachment, workspacePath: string) {
+  if (!attachment.path?.trim()) {
+    throw new ApiError("附件路径不能为空。", 400);
+  }
+
+  const filePath = path.resolve(attachment.path);
+
+  if (!fs.existsSync(filePath)) {
+    throw new ApiError(`附件不存在：${attachment.fileName || filePath}`, 400);
+  }
+
+  const stat = fs.statSync(filePath);
+
+  if (!stat.isFile()) {
+    throw new ApiError(`附件必须是文件：${attachment.fileName || filePath}`, 400);
+  }
+
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+  } catch {
+    throw new ApiError(`附件不可读：${attachment.fileName || filePath}`, 400);
+  }
+
+  if (!attachment.allowExternal && !isPathInside(workspacePath, filePath)) {
+    throw new ApiError("附件必须位于当前工作区内，或由用户明确确认引用外部路径。", 400);
+  }
+
+  return filePath;
+}
+
+function isPathInside(parentPath: string, childPath: string) {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function toPublicAttachment(attachment: MessageAttachmentRow) {
+  return {
+    id: attachment.id,
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    path: attachment.storagePath
+  };
+}
+
+function toAdapterAttachment(attachment: typeof messageAttachments.$inferInsert): AdapterAttachment {
+  return {
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    path: attachment.storagePath
+  };
 }

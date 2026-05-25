@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { AgentAdapter, AgentEvent, AdapterRunParams } from "@/lib/adapters/types";
+import { formatAttachmentContext, type AgentAdapter, type AgentEvent, type AdapterRunParams } from "@/lib/adapters/types";
 import { runProcess } from "@/lib/adapters/process-runner";
 
 const opencodeCommand = resolveOpenCodeCommand();
@@ -44,7 +44,7 @@ async function* runOpenCodeAdapter(params: AdapterRunParams): AsyncIterable<Agen
   let stderr = "";
 
   const processPromise = runOpenCode(
-    ["run", "--format", "json", "--dir", params.workspacePath, buildPrompt(params.messages)],
+    ["run", "--format", "json", "--dir", params.workspacePath, buildPrompt(params)],
     {
       signal: params.signal,
       timeoutMs: 10 * 60 * 1000,
@@ -122,15 +122,19 @@ function runOpenCode(
   });
 }
 
-function buildPrompt(messages: AdapterRunParams["messages"]) {
-  const recentMessages = messages.slice(-12);
+function buildPrompt(params: AdapterRunParams) {
+  const recentMessages = params.messages.slice(-12);
+  const attachmentContext = formatAttachmentContext(params.attachments);
 
-  return recentMessages
+  return [
+    recentMessages
     .map((message) => {
       const role = message.role === "assistant" ? "Assistant" : message.role === "user" ? "User" : "System";
       return `${role}: ${message.content}`;
     })
-    .join("\n\n");
+      .join("\n\n"),
+    attachmentContext ? `\n\nUser attachments:\n${attachmentContext}` : ""
+  ].join("");
 }
 
 function eventFromOpenCodeLine(line: string): AgentEvent | { type: "empty" } {

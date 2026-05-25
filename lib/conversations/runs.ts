@@ -1,19 +1,35 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import fs from "node:fs";
+import path from "node:path";
 import { getAdapter } from "@/lib/adapters/registry";
-import type { AdapterMessage, AgentEvent } from "@/lib/adapters/types";
+import type { AdapterAttachment, AdapterMessage, AgentEvent } from "@/lib/adapters/types";
 import { getDb } from "@/lib/db/client";
-import { agentRuns, agents, conversations, messages } from "@/lib/db/schema";
+import { agentRuns, agents, artifacts, conversations, messages } from "@/lib/db/schema";
 import { publishConversationEvent } from "@/lib/conversations/stream-bus";
 import type { AgentSummary } from "@/lib/agents/types";
 
 const activeRuns = new Map<string, AbortController>();
+const maxSnapshotFiles = 2500;
+const ignoredArtifactDirs = new Set([
+  ".git",
+  ".next",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  ".turbo",
+  ".vercel",
+  "data"
+]);
 
 type StartRunParams = {
   conversationId: string;
   agent: AgentSummary;
+  workspacePath: string;
+  attachments?: AdapterAttachment[];
 };
 
-export function startAgentRun({ conversationId, agent }: StartRunParams) {
+export function startAgentRun({ conversationId, agent, workspacePath, attachments = [] }: StartRunParams) {
   const now = Date.now();
   const runId = crypto.randomUUID();
   const assistantMessageId = crypto.randomUUID();
@@ -58,6 +74,8 @@ export function startAgentRun({ conversationId, agent }: StartRunParams) {
     conversationId,
     messageId: assistantMessageId,
     agent,
+    workspacePath,
+    attachments,
     signal: controller.signal
   });
 
@@ -89,27 +107,40 @@ async function drainAgentRun({
   conversationId,
   messageId,
   agent,
+  workspacePath,
+  attachments,
   signal
 }: {
   runId: string;
   conversationId: string;
   messageId: string;
   agent: AgentSummary;
+  workspacePath: string;
+  attachments: AdapterAttachment[];
   signal: AbortSignal;
 }) {
   let content = "";
   const adapter = getAdapter(agent.platform);
+  const beforeSnapshot = snapshotWorkspace(workspacePath);
 
   try {
     for await (const event of adapter.run({
       runId,
       conversationId,
-      workspacePath: process.cwd(),
+      workspacePath,
       messages: getAdapterMessages(conversationId),
-      attachments: [],
+      attachments,
       signal
     })) {
-      content = handleAgentEvent({ event, content, conversationId, messageId, runId });
+      content = handleAgentEvent({
+        event,
+        content,
+        conversationId,
+        messageId,
+        runId,
+        workspacePath,
+        beforeSnapshot
+      });
     }
   } catch (error) {
     if (signal.aborted) {
@@ -133,13 +164,17 @@ function handleAgentEvent({
   content,
   conversationId,
   messageId,
-  runId
+  runId,
+  workspacePath,
+  beforeSnapshot
 }: {
   event: AgentEvent;
   content: string;
   conversationId: string;
   messageId: string;
   runId: string;
+  workspacePath: string;
+  beforeSnapshot: WorkspaceSnapshot;
 }) {
   if (event.type === "text_delta") {
     const nextContent = `${content}${event.delta}`;
@@ -153,6 +188,7 @@ function handleAgentEvent({
   }
 
   if (event.type === "message_done") {
+    recordWorkspaceArtifacts({ conversationId, messageId, runId, workspacePath, beforeSnapshot });
     markRunDone(conversationId, runId, messageId);
   }
 
@@ -164,7 +200,186 @@ function handleAgentEvent({
     markRunErrored({ conversationId, runId, messageId, error: event.error });
   }
 
+  if (event.type === "artifact_created") {
+    if (event.artifact.path && hasArtifactForRunPath(runId, event.artifact.path)) {
+      return content;
+    }
+
+    const now = Date.now();
+    getDb()
+      .insert(artifacts)
+      .values({
+        id: crypto.randomUUID(),
+        conversationId,
+        messageId,
+        runId,
+        type: event.artifact.type,
+        title: event.artifact.title,
+        description: event.artifact.description ?? "",
+        path: event.artifact.path,
+        metadata: event.artifact.metadata ? JSON.stringify(event.artifact.metadata) : null,
+        createdAt: now
+      })
+      .run();
+  }
+
   return content;
+}
+
+function hasArtifactForRunPath(runId: string, artifactPath: string) {
+  return Boolean(
+    getDb()
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(and(eq(artifacts.path, artifactPath), eq(artifacts.runId, runId)))
+      .get()
+  );
+}
+
+type FileFingerprint = {
+  mtimeMs: number;
+  size: number;
+};
+
+type WorkspaceSnapshot = Map<string, FileFingerprint>;
+
+function snapshotWorkspace(workspacePath: string): WorkspaceSnapshot {
+  const snapshot: WorkspaceSnapshot = new Map();
+
+  if (!fs.existsSync(workspacePath)) {
+    return snapshot;
+  }
+
+  walkWorkspace(workspacePath, workspacePath, snapshot);
+  return snapshot;
+}
+
+function walkWorkspace(root: string, current: string, snapshot: WorkspaceSnapshot) {
+  if (snapshot.size >= maxSnapshotFiles) {
+    return;
+  }
+
+  let entries: fs.Dirent[];
+
+  try {
+    entries = fs.readdirSync(current, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (snapshot.size >= maxSnapshotFiles) {
+      return;
+    }
+
+    const absolutePath = path.join(current, entry.name);
+    const relativePath = path.relative(root, absolutePath);
+
+    if (entry.isDirectory()) {
+      if (!ignoredArtifactDirs.has(entry.name)) {
+        walkWorkspace(root, absolutePath, snapshot);
+      }
+      continue;
+    }
+
+    if (!entry.isFile() || isIgnoredArtifactPath(relativePath)) {
+      continue;
+    }
+
+    try {
+      const stat = fs.statSync(absolutePath);
+      snapshot.set(relativePath, {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size
+      });
+    } catch {
+      continue;
+    }
+  }
+}
+
+function isIgnoredArtifactPath(relativePath: string) {
+  const normalized = relativePath.replace(/\\/g, "/");
+
+  return (
+    normalized.startsWith("data/attachments/") ||
+    normalized.endsWith(".db") ||
+    normalized.endsWith(".sqlite") ||
+    normalized.endsWith(".sqlite3") ||
+    normalized.endsWith(".log")
+  );
+}
+
+function recordWorkspaceArtifacts({
+  conversationId,
+  messageId,
+  runId,
+  workspacePath,
+  beforeSnapshot
+}: {
+  conversationId: string;
+  messageId: string;
+  runId: string;
+  workspacePath: string;
+  beforeSnapshot: WorkspaceSnapshot;
+}) {
+  const afterSnapshot = snapshotWorkspace(workspacePath);
+  const changedPaths = [...afterSnapshot.entries()]
+    .filter(([relativePath, after]) => {
+      const before = beforeSnapshot.get(relativePath);
+      return !before || before.mtimeMs !== after.mtimeMs || before.size !== after.size;
+    })
+    .map(([relativePath]) => relativePath)
+    .slice(0, 20);
+
+  if (changedPaths.length === 0) {
+    return;
+  }
+
+  const now = Date.now();
+  const db = getDb();
+
+  for (const [index, relativePath] of changedPaths.entries()) {
+    const absolutePath = path.join(workspacePath, relativePath);
+    const existing = db
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(and(eq(artifacts.path, absolutePath), eq(artifacts.runId, runId)))
+      .get();
+
+    if (existing) {
+      continue;
+    }
+
+    db.insert(artifacts)
+      .values({
+        id: crypto.randomUUID(),
+        conversationId,
+        messageId,
+        runId,
+        type: artifactTypeForPath(relativePath),
+        title: path.basename(relativePath),
+        description: relativePath,
+        path: absolutePath,
+        metadata: JSON.stringify({ source: "workspace_diff", relativePath }),
+        createdAt: now + index
+      })
+      .run();
+  }
+}
+
+function artifactTypeForPath(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(extension)) {
+    return "image";
+  }
+
+  if ([".md", ".txt", ".json", ".ts", ".tsx", ".js", ".jsx", ".css", ".html", ".py", ".go", ".rs"].includes(extension)) {
+    return "code";
+  }
+
+  return "file";
 }
 
 function getAdapterMessages(conversationId: string): AdapterMessage[] {

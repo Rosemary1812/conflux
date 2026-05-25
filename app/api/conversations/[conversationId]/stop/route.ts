@@ -12,7 +12,7 @@ export async function POST(_: Request, context: RouteContext) {
   const runId = stopConversationRun(conversationId);
 
   if (!runId) {
-    return NextResponse.json({ error: "当前会话没有正在运行的任务。" }, { status: 404 });
+    return NextResponse.json({ ok: true, alreadyStopped: true });
   }
 
   return NextResponse.json({ ok: true, runId });

@@ -9,8 +9,11 @@ export function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => ({}))) as { mode?: "single" | "group" };
-    return NextResponse.json({ conversation: createConversation(body.mode ?? "single") }, { status: 201 });
+    const body = (await request.json().catch(() => ({}))) as {
+      mode?: "single" | "group";
+      workspacePath?: string;
+    };
+    return NextResponse.json({ conversation: createConversation(body) }, { status: 201 });
   } catch (error) {
     return toErrorResponse(error);
   }

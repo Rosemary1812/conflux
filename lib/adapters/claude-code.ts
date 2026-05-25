@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentEvent, AdapterRunParams } from "@/lib/adapters/types";
+import { formatAttachmentContext, type AgentAdapter, type AgentEvent, type AdapterRunParams } from "@/lib/adapters/types";
 import { commandExists, runProcess } from "@/lib/adapters/process-runner";
 
 export const claudeCodeAdapter: AgentAdapter = {
@@ -46,7 +46,7 @@ async function* runClaudeCode(params: AdapterRunParams): AsyncIterable<AgentEven
     "claude",
     [
       "-p",
-      buildPrompt(params.messages),
+      buildPrompt(params),
       "--output-format",
       "stream-json",
       "--verbose",
@@ -120,15 +120,19 @@ async function* runClaudeCode(params: AdapterRunParams): AsyncIterable<AgentEven
   }
 }
 
-function buildPrompt(messages: AdapterRunParams["messages"]) {
-  const recentMessages = messages.slice(-12);
+function buildPrompt(params: AdapterRunParams) {
+  const recentMessages = params.messages.slice(-12);
+  const attachmentContext = formatAttachmentContext(params.attachments);
 
-  return recentMessages
+  return [
+    recentMessages
     .map((message) => {
       const role = message.role === "assistant" ? "Assistant" : message.role === "user" ? "User" : "System";
       return `${role}: ${message.content}`;
     })
-    .join("\n\n");
+      .join("\n\n"),
+    attachmentContext ? `\n\nUser attachments:\n${attachmentContext}` : ""
+  ].join("");
 }
 
 function eventFromClaudeLine(line: string, emittedText: boolean): AgentEvent | { type: "empty" } {

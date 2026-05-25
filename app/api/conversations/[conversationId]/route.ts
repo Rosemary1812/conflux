@@ -22,6 +22,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const body = (await request.json().catch(() => ({}))) as {
       title?: string;
       archived?: boolean;
+      workspacePath?: string;
     };
 
     return NextResponse.json({ conversation: updateConversation(conversationId, body) });

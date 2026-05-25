@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
-import { ApiError, sendMessage } from "@/lib/conversations/service";
+import { ApiError, sendMessage, type IncomingAttachment } from "@/lib/conversations/service";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { conversationId?: string; content?: string };
+    const body = (await request.json()) as {
+      conversationId?: string;
+      content?: string;
+      attachments?: IncomingAttachment[];
+    };
 
     if (!body.conversationId) {
       throw new ApiError("缺少 conversationId。", 400);
     }
 
-    return NextResponse.json(sendMessage(body.conversationId, body.content ?? ""), { status: 201 });
+    return NextResponse.json(sendMessage(body.conversationId, body.content ?? "", body.attachments ?? []), {
+      status: 201
+    });
   } catch (error) {
     return toErrorResponse(error);
   }

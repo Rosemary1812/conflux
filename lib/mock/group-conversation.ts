@@ -1,4 +1,5 @@
 import type { ConversationSummary } from "@/lib/conversations/types";
+import { workspacePath } from "@/lib/mock/conversations";
 
 export const groupConversationPreview: ConversationSummary = {
   id: "group-preview",
@@ -6,5 +7,6 @@ export const groupConversationPreview: ConversationSummary = {
   title: "群聊静态预览",
   preview: "V1 仅 UI，不接 Orchestrator",
   status: "preview",
-  avatar: "CC CX"
+  avatar: "CC CX",
+  workspacePath
 };

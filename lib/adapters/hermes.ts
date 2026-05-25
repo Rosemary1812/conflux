@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentEvent, AdapterRunParams } from "@/lib/adapters/types";
+import { formatAttachmentContext, type AgentAdapter, type AgentEvent, type AdapterRunParams } from "@/lib/adapters/types";
 import { runProcess } from "@/lib/adapters/process-runner";
 
 const wslDistro = process.env.AGENTHUB_HERMES_WSL_DISTRO ?? "Ubuntu-24.04";
@@ -36,7 +36,7 @@ async function* runHermes(params: AdapterRunParams): AsyncIterable<AgentEvent> {
 
   yield { type: "run_status", status: "running" };
 
-  const result = await runHermesShell(`cd "${toWslPath(params.workspacePath)}" && hermes --oneshot ${shellQuote(buildPrompt(params.messages))}`, {
+  const result = await runHermesShell(`cd "${toWslPath(params.workspacePath)}" && hermes --oneshot ${shellQuote(buildPrompt(params))}`, {
     signal: params.signal,
     timeoutMs: 10 * 60 * 1000
   });
@@ -73,15 +73,19 @@ function runHermesShell(
   });
 }
 
-function buildPrompt(messages: AdapterRunParams["messages"]) {
-  const recentMessages = messages.slice(-12);
+function buildPrompt(params: AdapterRunParams) {
+  const recentMessages = params.messages.slice(-12);
+  const attachmentContext = formatAttachmentContext(params.attachments);
 
-  return recentMessages
+  return [
+    recentMessages
     .map((message) => {
       const role = message.role === "assistant" ? "Assistant" : message.role === "user" ? "User" : "System";
       return `${role}: ${message.content}`;
     })
-    .join("\n\n");
+      .join("\n\n"),
+    attachmentContext ? `\n\nUser attachments:\n${attachmentContext}` : ""
+  ].join("");
 }
 
 function toWslPath(workspacePath: string) {

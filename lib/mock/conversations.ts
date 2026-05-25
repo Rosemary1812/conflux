@@ -9,7 +9,8 @@ export const mockConversations: ConversationSummary[] = [
     title: "React 组件重构",
     preview: "Claude Code 正在运行 lint，并回写 Button 组件",
     status: "running",
-    avatar: "claude-code"
+    avatar: "claude-code",
+    workspacePath
   },
   {
     id: "single-tests",
@@ -17,7 +18,8 @@ export const mockConversations: ConversationSummary[] = [
     title: "单元测试补全",
     preview: "Codex 已生成 3 个测试文件，并给出总结",
     status: "done",
-    avatar: "codex"
+    avatar: "codex",
+    workspacePath
   },
   {
     id: "group-fullstack",
@@ -25,7 +27,8 @@ export const mockConversations: ConversationSummary[] = [
     title: "全栈功能开发",
     preview: "群聊 UI 已就位，V2 再接 Orchestrator",
     status: "preview",
-    avatar: "claude-code codex"
+    avatar: "claude-code codex",
+    workspacePath
   }
 ];
 
