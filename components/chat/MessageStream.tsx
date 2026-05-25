@@ -8,26 +8,33 @@ import { groupMessages } from "@/lib/mock/conversations";
 
 type MessageStreamProps = {
   conversation: ConversationSummary | null;
+  draftWorkspacePath?: string;
   error: string | null;
   isContextCollapsed: boolean;
   isLoading: boolean;
   messages: MockMessage[];
+  onRegenerate?: (messageId: string) => Promise<void>;
   onToggleContext: () => void;
+  onToggleTerminal: () => void;
   view: ConversationView;
 };
 
 export function MessageStream({
   conversation,
+  draftWorkspacePath,
   error,
   isContextCollapsed,
   isLoading,
   messages,
+  onRegenerate,
   onToggleContext,
+  onToggleTerminal,
   view
 }: MessageStreamProps) {
   const isNew = view === "new-single" || view === "new-group" || (!conversation?.lockedAgent && messages.length === 0);
   const isGroup = view === "group" || view === "new-group";
   const title = getTitle(view, conversation);
+  const workspacePath = conversation?.workspacePath ?? draftWorkspacePath;
 
   return (
     <div className="message-stream">
@@ -42,7 +49,7 @@ export function MessageStream({
           ) : (
             <div className="header-meta">
               <span>{conversation?.lockedAgent ? `${conversation.lockedAgent.name} 已锁定` : "空白单聊"}</span>
-              <span>当前工作区 AgentHub</span>
+              <span>当前工作区 {formatWorkspace(workspacePath)}</span>
             </div>
           )}
         </div>
@@ -56,7 +63,7 @@ export function MessageStream({
           >
             {isContextCollapsed ? <PanelRightOpen size={17} /> : <PanelRightClose size={17} />}
           </button>
-          <button aria-label="打开终端" className="icon-button" type="button">
+          <button aria-label="打开终端" className="icon-button" onClick={onToggleTerminal} type="button">
             <TerminalSquare size={17} />
           </button>
         </div>
@@ -73,7 +80,7 @@ export function MessageStream({
           <div className="message-thread">
             <div className="message-date">今天</div>
             {(isGroup ? groupMessages : messages).map((message) => (
-              <MessageBubble key={message.id} message={message} />
+              <MessageBubble key={message.id} message={message} onRegenerate={isGroup ? undefined : onRegenerate} />
             ))}
           </div>
         )}
@@ -81,6 +88,14 @@ export function MessageStream({
       </div>
     </div>
   );
+}
+
+function formatWorkspace(workspacePath?: string) {
+  if (!workspacePath) {
+    return "未选择";
+  }
+
+  return workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? workspacePath;
 }
 
 function getTitle(view: ConversationView, conversation: ConversationSummary | null) {

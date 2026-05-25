@@ -1,12 +1,17 @@
 import { Download, Eye, FileCode2 } from "lucide-react";
+import type { ConversationArtifact } from "@/lib/conversations/types";
 
 type ArtifactCardProps = {
-  description: string;
-  files: string[];
-  title: string;
+  artifacts: ConversationArtifact[];
 };
 
-export function ArtifactCard({ description, files, title }: ArtifactCardProps) {
+export function ArtifactCard({ artifacts }: ArtifactCardProps) {
+  const title = artifacts.length === 1 ? artifacts[0].title : `${artifacts.length} 个产出文件`;
+  const description =
+    artifacts.length === 1
+      ? artifacts[0].description || "Agent 生成的产物文件"
+      : "Agent 生成的产物文件列表";
+
   return (
     <div className="artifact-card">
       <div className="artifact-head">
@@ -24,8 +29,10 @@ export function ArtifactCard({ description, files, title }: ArtifactCardProps) {
       <div className="artifact-body">
         <p>{description}</p>
         <div className="artifact-files">
-          {files.map((file) => (
-            <code key={file}>{file}</code>
+          {artifacts.map((artifact) => (
+            <code key={artifact.id} title={artifact.path ?? undefined}>
+              {artifact.path ?? artifact.title}
+            </code>
           ))}
         </div>
       </div>

@@ -6,7 +6,7 @@ import { MessageStream } from "@/components/chat/MessageStream";
 import { ContextPanel } from "@/components/context/ContextPanel";
 import { SettingsModal } from "@/components/settings/SettingsModal";
 import { ConversationSidebar } from "@/components/shell/ConversationSidebar";
-import type { ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
+import type { AttachmentReference, ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
 import type { ConversationStreamEvent } from "@/lib/conversations/stream-bus";
 
 export function AppShell() {
@@ -18,7 +18,9 @@ export function AppShell() {
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
+  const [contextMode, setContextMode] = useState<"context" | "terminal">("context");
   const [contextWidth, setContextWidth] = useState(312);
+  const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | undefined>();
 
   const isGroup = view === "group" || view === "new-group";
   const activeConversation =
@@ -102,15 +104,16 @@ export function AppShell() {
         current.map((conversation) =>
           conversation.id === activeConversationId
             ? {
-                ...conversation,
-                status: payload.status === "running" ? "running" : "done"
-              }
+              ...conversation,
+              status: payload.status === "running" ? "running" : "done"
+            }
             : conversation
         )
       );
 
       if (payload.status !== "running") {
         void loadConversations();
+        void loadMessages(activeConversationId);
       }
     });
 
@@ -164,44 +167,34 @@ export function AppShell() {
     }
   }
 
-  async function createSingleConversation() {
+  function createSingleConversation() {
     setError(null);
-
-    try {
-      const response = await fetch("/api/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "single" })
-      });
-      const payload = (await response.json()) as { conversation?: ConversationSummary; error?: string };
-
-      if (!response.ok || !payload.conversation) {
-        throw new Error(payload.error ?? "创建会话失败。");
-      }
-
-      setConversations((current) => [payload.conversation!, ...current]);
-      setActiveConversationId(payload.conversation.id);
-      setMessages([]);
-      setView("single");
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "创建会话失败。");
-    }
+    setDraftWorkspacePath(undefined);
+    setActiveConversationId(null);
+    setMessages([]);
+    setView("new-single");
   }
 
-  async function sendMessage(content: string) {
+  async function sendMessage(content: string, attachments: AttachmentReference[] = []) {
     if (isGroup) {
-      return;
+      return false;
     }
     setError(null);
 
     try {
       let conversationId = activeConversationId;
+      const workspacePath = activeConversation?.workspacePath ?? draftWorkspacePath;
+
+      if (!workspacePath) {
+        setError("请先选择当前工作区。");
+        return false;
+      }
 
       if (!conversationId) {
         const response = await fetch("/api/conversations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "single" })
+          body: JSON.stringify({ mode: "single", workspacePath })
         });
         const payload = (await response.json()) as { conversation?: ConversationSummary; error?: string };
 
@@ -211,12 +204,13 @@ export function AppShell() {
 
         conversationId = payload.conversation.id;
         setActiveConversationId(conversationId);
+        setDraftWorkspacePath(payload.conversation.workspacePath);
       }
 
       const response = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId, content })
+        body: JSON.stringify({ conversationId, content, attachments })
       });
       const payload = (await response.json()) as {
         conversation?: ConversationSummary;
@@ -235,9 +229,12 @@ export function AppShell() {
       ]);
       setMessages(payload.messages);
       setActiveConversationId(payload.conversation.id);
+      setDraftWorkspacePath(payload.conversation.workspacePath);
       setView("single");
+      return true;
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "发送消息失败。");
+      return false;
     }
   }
 
@@ -257,8 +254,41 @@ export function AppShell() {
       if (!response.ok) {
         throw new Error(payload.error ?? "停止生成失败。");
       }
+
+      markConversationIdle(activeConversationId);
+      await loadMessages(activeConversationId);
+      await loadConversations();
     } catch (stopError) {
       setError(stopError instanceof Error ? stopError.message : "停止生成失败。");
+      markConversationIdle(activeConversationId);
+    }
+  }
+
+  async function regenerateMessage(messageId: string) {
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/messages/${messageId}/regenerate`, {
+        method: "POST"
+      });
+      const payload = (await response.json()) as {
+        conversation?: ConversationSummary;
+        messages?: MockMessage[];
+        error?: string;
+      };
+
+      if (!response.ok || !payload.conversation || !payload.messages) {
+        throw new Error(payload.error ?? "重新生成失败。");
+      }
+
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === payload.conversation!.id ? payload.conversation! : conversation
+        )
+      );
+      setMessages(payload.messages);
+    } catch (regenerateError) {
+      setError(regenerateError instanceof Error ? regenerateError.message : "重新生成失败。");
     }
   }
 
@@ -273,6 +303,57 @@ export function AppShell() {
       setActiveConversationId(null);
       setMessages([]);
       setView("new-single");
+    }
+  }
+
+  async function updateWorkspacePath(conversationId: string, workspacePath: string) {
+    await updateConversation(conversationId, { workspacePath }, "更新工作区失败。");
+    setDraftWorkspacePath(workspacePath);
+  }
+
+  async function chooseWorkspacePath() {
+    setError(null);
+
+    try {
+      const response = await fetch("/api/workspace/select", {
+        method: "POST"
+      });
+      const payload = (await response.json()) as {
+        cancelled?: boolean;
+        error?: string;
+        workspacePath?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "选择工作区失败。");
+      }
+
+      if (payload.cancelled || !payload.workspacePath) {
+        return null;
+      }
+
+      return payload.workspacePath;
+    } catch (selectError) {
+      setError(selectError instanceof Error ? selectError.message : "选择工作区失败。");
+      return null;
+    }
+  }
+
+  async function selectWorkspacePath(conversationId: string) {
+    const workspacePath = await chooseWorkspacePath();
+
+    if (!workspacePath) {
+      return;
+    }
+
+    await updateWorkspacePath(conversationId, workspacePath);
+  }
+
+  async function selectDraftWorkspacePath() {
+    const workspacePath = await chooseWorkspacePath();
+
+    if (workspacePath) {
+      setDraftWorkspacePath(workspacePath);
     }
   }
 
@@ -303,7 +384,7 @@ export function AppShell() {
 
   async function updateConversation(
     conversationId: string,
-    updates: { title?: string; archived?: boolean },
+    updates: { title?: string; archived?: boolean; workspacePath?: string },
     fallbackMessage: string
   ) {
     setError(null);
@@ -352,23 +433,31 @@ export function AppShell() {
         onRenameConversation={renameConversation}
         onSelectConversation={(conversationId) => {
           setActiveConversationId(conversationId);
+          setDraftWorkspacePath(conversations.find((conversation) => conversation.id === conversationId)?.workspacePath);
           setView("single");
         }}
         onSelectView={(nextView) => {
           setView(nextView);
           if (nextView !== "single") {
             setActiveConversationId(null);
+            setDraftWorkspacePath(undefined);
           }
         }}
       />
       <section className="chat-surface">
         <MessageStream
           conversation={activeConversation}
+          draftWorkspacePath={draftWorkspacePath}
           error={error}
           isContextCollapsed={contextCollapsed}
           isLoading={isLoading}
           messages={messages}
+          onRegenerate={regenerateMessage}
           onToggleContext={() => setContextCollapsed((value) => !value)}
+          onToggleTerminal={() => {
+            setContextCollapsed(false);
+            setContextMode((value) => (value === "terminal" ? "context" : "terminal"));
+          }}
           view={view}
         />
         <Composer
@@ -377,19 +466,41 @@ export function AppShell() {
           isGroup={isGroup}
           isNewConversation={isNewConversation}
           isRunning={isActiveConversationRunning}
+          workspacePath={activeConversation?.workspacePath ?? draftWorkspacePath}
           onSend={sendMessage}
           onStop={stopMessage}
+          onWorkspaceSelect={
+            activeConversationId
+              ? () => selectWorkspacePath(activeConversationId)
+              : selectDraftWorkspacePath
+          }
         />
       </section>
       {!contextCollapsed ? (
         <ContextPanel
           conversation={activeConversation}
+          draftWorkspacePath={draftWorkspacePath}
+          mode={contextMode}
           messages={messages}
           onResize={setContextWidth}
+          onCloseTerminal={() => setContextMode("context")}
           view={view}
         />
       ) : null}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </main>
   );
+
+  function markConversationIdle(conversationId: string) {
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId ? { ...conversation, status: "done" } : conversation
+      )
+    );
+    setMessages((current) =>
+      current.map((message) =>
+        message.status === "running" ? { ...message, status: "cancelled" } : message
+      )
+    );
+  }
 }

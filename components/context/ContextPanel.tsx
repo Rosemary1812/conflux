@@ -1,18 +1,30 @@
 "use client";
 
-import { FileText, GripVertical } from "lucide-react";
+import { FileText, GripVertical, TerminalSquare, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgentIcon } from "@/components/agents/AgentIcon";
-import type { ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
+import type { ConversationArtifact, ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
 
 type ContextPanelProps = {
   conversation: ConversationSummary | null;
+  draftWorkspacePath?: string;
+  mode: "context" | "terminal";
   messages: MockMessage[];
+  onCloseTerminal: () => void;
   onResize: (width: number) => void;
   view: ConversationView;
 };
 
-export function ContextPanel({ conversation, messages, onResize, view }: ContextPanelProps) {
+export function ContextPanel({
+  conversation,
+  draftWorkspacePath,
+  mode,
+  messages,
+  onCloseTerminal,
+  onResize,
+  view
+}: ContextPanelProps) {
   const isGroup = view === "group" || view === "new-group";
   const isNew = view === "new-single" || view === "new-group" || (!conversation?.lockedAgent && messages.length === 0);
 
@@ -39,21 +51,28 @@ export function ContextPanel({ conversation, messages, onResize, view }: Context
         <GripVertical size={14} />
       </div>
       <div className="context-topbar">
-        <h2>{isGroup ? "群聊上下文" : "当前上下文"}</h2>
+        <h2>{mode === "terminal" ? "Terminal" : isGroup ? "群聊上下文" : "当前上下文"}</h2>
+        {mode === "terminal" ? (
+          <button aria-label="关闭终端视图" className="icon-button" onClick={onCloseTerminal} type="button">
+            <X size={15} />
+          </button>
+        ) : null}
       </div>
 
-      {isNew ? (
-        <NewConversationContext isGroup={isGroup} />
+      {mode === "terminal" ? (
+        <TerminalView conversation={conversation} />
+      ) : isNew ? (
+        <NewConversationContext draftWorkspacePath={draftWorkspacePath} isGroup={isGroup} />
       ) : isGroup ? (
         <GroupContext />
       ) : (
-        <SingleContext conversation={conversation} />
+        <SingleContext conversation={conversation} messages={messages} />
       )}
     </aside>
   );
 }
 
-function NewConversationContext({ isGroup }: { isGroup: boolean }) {
+function NewConversationContext({ draftWorkspacePath, isGroup }: { draftWorkspacePath?: string; isGroup: boolean }) {
   return (
     <div className="context-content">
       <section className="context-section">
@@ -63,6 +82,16 @@ function NewConversationContext({ isGroup }: { isGroup: boolean }) {
           <div>
             <strong>{isGroup ? "等待多个 @Agent" : "等待一个 @Agent"}</strong>
             <p>{isGroup ? "Orchestrator 仅在 UI 中自动展示" : "发送成功后锁定当前 Agent"}</p>
+          </div>
+        </div>
+      </section>
+      <section className="context-section">
+        <div className="section-title">工作区</div>
+        <div className="status-card">
+          <FileText size={16} />
+          <div>
+            <strong>{draftWorkspacePath ? formatWorkspace(draftWorkspacePath) : "未选择"}</strong>
+            <p>{draftWorkspacePath ?? "可在发送首条消息前选择 Agent 的活动目录"}</p>
           </div>
         </div>
       </section>
@@ -79,7 +108,7 @@ function NewConversationContext({ isGroup }: { isGroup: boolean }) {
   );
 }
 
-function SingleContext({ conversation }: { conversation: ConversationSummary | null }) {
+function SingleContext({ conversation, messages }: { conversation: ConversationSummary | null; messages: MockMessage[] }) {
   const agent = conversation?.lockedAgent;
 
   return (
@@ -95,6 +124,16 @@ function SingleContext({ conversation }: { conversation: ConversationSummary | n
         </div>
       </section>
       <section className="context-section">
+        <div className="section-title">工作区</div>
+        <div className="status-card">
+          <FileText size={16} />
+          <div>
+            <strong>{conversation?.workspacePath ? formatWorkspace(conversation.workspacePath) : "未选择"}</strong>
+            <p>{conversation?.workspacePath ?? "创建单聊后自动绑定默认目录"}</p>
+          </div>
+        </div>
+      </section>
+      <section className="context-section">
         <div className="section-title">进度</div>
         <ul className="todo-list">
           <li className="done">会话已落库</li>
@@ -104,15 +143,143 @@ function SingleContext({ conversation }: { conversation: ConversationSummary | n
       </section>
       <section className="context-section">
         <div className="section-title">产出文件</div>
-        <ul className="file-list">
-          <li>
-            <FileText size={14} />
-            Phase 3 暂不生成产物
-          </li>
-        </ul>
+        <ArtifactFileList artifacts={conversation?.artifacts ?? []} />
       </section>
     </div>
   );
+}
+
+function ArtifactFileList({ artifacts }: { artifacts: ConversationArtifact[] }) {
+  if (artifacts.length === 0) {
+    return (
+      <ul className="file-list">
+        <li>
+          <FileText size={14} />
+          暂无 Agent 产出文件
+        </li>
+      </ul>
+    );
+  }
+
+  return (
+    <ul className="file-list">
+      {artifacts.map((artifact) => (
+        <li key={artifact.id}>
+          <FileText size={14} />
+          <span title={artifact.path ?? undefined}>{artifact.title}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TerminalView({ conversation }: { conversation: ConversationSummary | null }) {
+  const terminalRef = useRef<HTMLDivElement | null>(null);
+  const [status, setStatus] = useState(conversation ? "正在连接 Terminal..." : "请先打开一个单聊会话。");
+
+  useEffect(() => {
+    if (!conversation || !terminalRef.current) {
+      setStatus("请先打开一个单聊会话。");
+      return;
+    }
+
+    const currentConversation = conversation;
+    let socket: WebSocket | null = null;
+    let terminal: import("@xterm/xterm").Terminal | null = null;
+    let fitAddon: import("@xterm/addon-fit").FitAddon | null = null;
+    let disposed = false;
+
+    async function connectTerminal() {
+      setStatus("正在连接 Terminal...");
+
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit")
+      ]);
+      const response = await fetch("/api/terminal/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: currentConversation.id })
+      });
+      const payload = (await response.json()) as { error?: string; url?: string };
+
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.error ?? "Terminal 会话创建失败。");
+      }
+
+      if (disposed || !terminalRef.current) {
+        return;
+      }
+
+      terminal = new Terminal({
+        cursorBlink: true,
+        fontFamily: "var(--font-mono)",
+        fontSize: 12,
+        convertEol: true,
+        theme: {
+          background: "#1f252b",
+          foreground: "#d9e2ec",
+          cursor: "#ffffff",
+          selectionBackground: "#34515a"
+        }
+      });
+      fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.open(terminalRef.current);
+      fitAddon.fit();
+
+      socket = new WebSocket(payload.url);
+      socket.onopen = () => {
+        setStatus(`已连接 · ${formatWorkspace(currentConversation.workspacePath)}`);
+        fitAddon?.fit();
+      };
+      socket.onmessage = (event) => {
+        terminal?.write(typeof event.data === "string" ? event.data : "");
+      };
+      socket.onclose = () => {
+        setStatus("Terminal 已断开。");
+      };
+      socket.onerror = () => {
+        setStatus("Terminal 连接失败。");
+      };
+      terminal.onData((data) => {
+        if (socket?.readyState === WebSocket.OPEN) {
+          socket.send(data);
+        }
+      });
+
+      window.addEventListener("resize", fitTerminal);
+    }
+
+    function fitTerminal() {
+      fitAddon?.fit();
+    }
+
+    connectTerminal().catch((error: unknown) => {
+      setStatus(error instanceof Error ? error.message : "Terminal 连接失败。");
+    });
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("resize", fitTerminal);
+      socket?.close();
+      terminal?.dispose();
+    };
+  }, [conversation]);
+
+  return (
+    <div className="context-content terminal-view">
+      <div className="terminal-status">
+        <TerminalSquare size={14} />
+        <span>{status}</span>
+      </div>
+      <div className="terminal-xterm" ref={terminalRef} />
+    </div>
+  );
+}
+
+function formatWorkspace(workspacePath: string) {
+  return workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? workspacePath;
 }
 
 function GroupContext() {
