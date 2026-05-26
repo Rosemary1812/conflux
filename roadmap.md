@@ -10,6 +10,12 @@
 
 **目标**：单聊端到端可用、体验完整；群聊界面可演示产品形态，但发送消息不触发真实编排。
 
+**V1 状态（2026-05-26）**
+
+- **实现**：Phase 0–6 已收口；单聊端到端、群聊静态 UI、设计文档（`TECH_DESIGN.md` §7、`API_CONTRACT.md`、`REVIEW_CHECKLIST.md`）已就绪，可本机 Demo / 答辩。
+- **验收**：按 `docs/design/REVIEW_CHECKLIST.md` 人工勾选；未勾 P0 或已知遗留见 `docs/state/TOFIX.md`、`docs/state/TODO.md`（如引用回复、附件真实 Agent 端到端 smoke）。
+- **下一主线**：V2 群聊 + Orchestrator + Provider。
+
 ### 单聊（必须跑通）
 
 **后端**

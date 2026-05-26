@@ -14,7 +14,7 @@ import {
   UsersRound
 } from "lucide-react";
 import { AgentIcon } from "@/components/agents/AgentIcon";
-import { mockConversations } from "@/lib/mock/conversations";
+import { groupConversations } from "@/lib/mock/group-conversation";
 import type { ConversationSummary, ConversationView } from "@/lib/conversations/types";
 
 type ConversationSidebarProps = {
@@ -47,7 +47,6 @@ export function ConversationSidebar({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
-  const groupConversations = mockConversations.filter((conversation) => conversation.mode === "group");
   const activeConversations = conversations.filter((conversation) => !conversation.archivedAt);
   const archivedConversations = conversations.filter((conversation) => conversation.archivedAt);
   const deleteTarget = conversations.find((conversation) => conversation.id === deleteTargetId) ?? null;

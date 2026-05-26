@@ -133,3 +133,138 @@ Agent（V3 补充）
 - [Claude Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)
 - [Permissions（CLI/SDK 规则语法）](https://code.claude.com/docs/en/permissions)
 - 项目 memo：`docs/memo/2026-05-23-1600-custom-agent-tech-choice.md`
+
+---
+
+## 7. V1 单聊架构（已实现）
+
+> **范围**：IM 单聊端到端——Next.js UI + Route Handlers + SQLite/Drizzle + 适配器 + 进程内 SSE stream-bus + 可选本机 PTY Terminal。  
+> **不在 V1**：真实群聊调度、Orchestrator、Provider 表、自建 Agent（见上文 §1–§6）。
+
+### 7.1 总体架构
+
+本机优先：浏览器访问 `localhost` 上的 Next.js；SQLite、Agent CLI、PTY 与 API 同进程。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  浏览器（React / App Router）                                     │
+│  AppShell · MessageStream · Composer · ContextPanel · xterm.js   │
+└────────────┬───────────────────────────────┬────────────────────┘
+             │ HTTP (REST)                    │ SSE
+             ▼                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Next.js Route Handlers（runtime: nodejs）                        │
+│  app/api/conversations · messages · …/stream · …/stop           │
+│  app/api/terminal/session · app/api/agents/health                 │
+└────────────┬───────────────────────────────┬────────────────────┘
+             │                                │
+             ▼                                ▼
+┌────────────────────────┐    ┌───────────────────────────────────┐
+│  lib/conversations/    │    │  lib/conversations/stream-bus.ts   │
+│  service.ts · runs.ts  │───▶│  进程内 Map pub/sub → SSE 推送      │
+└────────────┬───────────┘    └───────────────────────────────────┘
+             │
+     ┌───────┴────────┐
+     ▼                ▼
+┌──────────┐   ┌──────────────────────────────────────────────────┐
+│ SQLite   │   │  lib/adapters/registry → claude_code / codex /    │
+│ Drizzle  │   │  hermes / opencode（fake 模式见环境变量）            │
+└──────────┘   └──────────────────────────────────────────────────┘
+                          │
+                          ▼
+               本机 Agent CLI（claude / codex / …）
+
+可选：lib/terminal/websocket-server.ts（127.0.0.1 WebSocket + node-pty）
+```
+
+| 变量 | 作用 |
+| --- | --- |
+| `AGENTHUB_DB_PATH` | 覆盖 SQLite 路径 |
+| `AGENTHUB_ADAPTER_MODE=fake` | `getAdapter()` 全局返回 fake |
+| `AGENTHUB_ENABLE_TERMINAL=1` | 生产构建仍启用 Terminal |
+| `AGENTHUB_OPENCODE_COMMAND` | OpenCode CLI 可执行路径 |
+
+### 7.2 数据模型
+
+定义于 `lib/db/schema.ts`（Drizzle + SQLite）。V1 **无** Provider 表。
+
+| 表 | 要点 |
+| --- | --- |
+| `agents` | 内置目录：`slug`、`platform`、`enabled`；启动 seed |
+| `conversations` | `mode`：`single` \| `group`；`status`：`empty` \| `running` \| `done` \| `preview`；`locked_agent_id`、`workspace_path` |
+| `conversation_agents` | 单聊锁定行：`role=primary`，`(conversation_id, agent_id)` 唯一 |
+| `messages` | `role`：user/assistant/system/tool；`status`：pending/running/done/error/cancelled |
+| `message_attachments` | 本机 `storage_path` + metadata |
+| `agent_runs` | 单次执行；`started_at` / `finished_at` / `error` |
+| `artifacts` | 关联 `conversation`、`message`、`run`；adapter 事件或工作区 diff 快照 |
+
+### 7.3 单聊运行链路
+
+**创建会话**：`POST /api/conversations` → `createConversation()`，默认 `mode=single`；`mode=group` 直接 400。侧栏 `listConversations()` 仅返回 `mode=single` 且非空会话。
+
+**首条 @ 锁定**（`sendMessage` / `validateSingleChatMention`）：
+
+- 无 `conversation_agents` 行时：首条须且只能 `@` 一个 Agent，写入 `conversation_agents` 并设置 `conversations.locked_agent_id`。
+- 已锁定：正文中的 `@` 必须与锁定 Agent 一致，否则 400。
+
+**发消息与 Run**：
+
+1. `POST /api/messages` → `sendMessage()`：校验 mention、写 user 消息与附件、`conversations.status=running`。
+2. `startAgentRun()`：插入 `agent_runs`、空 `assistant` 消息（`status=running`），`activeRuns` 注册 `AbortController`，异步 `drainAgentRun()`。
+3. `getAdapter(agent.platform).run(...)` 迭代 `AgentEvent` → `handleAgentEvent()` 更新 SQLite 并 `publishConversationEvent()`。
+4. 浏览器 `EventSource` → `GET /api/conversations/:id/stream`：先回放进行中 assistant，再订阅 `message_delta` / `message_replace` / `message_status` / `run_status`（15s `ping`）。
+5. **停止**：`POST .../stop` → `stopConversationRun()` → `AbortController.abort()`，适配器收到 `signal` 后 `message_cancelled`。
+6. **重新生成**：`POST /api/messages/:id/regenerate` → 仅最近一条 assistant、且 agent 与锁定一致；删消息后再次 `startAgentRun()`。
+
+Run 结束后还可根据工作区目录 diff 写入 `artifacts`（`recordWorkspaceArtifacts`）。
+
+### 7.4 AgentAdapter 契约
+
+`lib/adapters/types.ts`：
+
+```typescript
+type AgentAdapter = {
+  platform: AgentPlatform | string;
+  healthcheck(): Promise<AdapterHealth>;
+  run(params: AdapterRunParams): AsyncIterable<AgentEvent>;
+};
+
+type AgentEvent =
+  | { type: "text_delta"; delta: string }
+  | { type: "artifact_created"; artifact: ArtifactPayload }
+  | { type: "run_status"; status: string }
+  | { type: "message_done" }
+  | { type: "message_error"; error: string }
+  | { type: "message_cancelled" };
+```
+
+`lib/adapters/registry.ts` 按 `platform` 解析；V1 内置 Agent 走本机 CLI/OAuth，**不读 Provider**（§3.2）。附件路径经 `formatAttachmentContext()` 注入 prompt 上下文。
+
+SSE 对外事件类型见 `ConversationStreamEvent`（`stream-bus.ts`），与 adapter 事件经 `runs.ts` 映射。
+
+### 7.5 群聊 V1 边界
+
+| 层 | 行为 |
+| --- | --- |
+| UI | `lib/mock/group-conversation.ts`；`view` 为 `group` / `new-group` 时不拉消息、不建 SSE、`sendMessage` 与 Composer 禁用；`MessageStream` 展示 mock |
+| API | `createConversation({ mode: "group" })`、`sendMessage`、`regenerateMessage` 对 group 会话均 400 |
+
+V2 再对接 Orchestrator 与真实群聊 API。
+
+### 7.6 Terminal（可选）
+
+`POST /api/terminal/session` 签发一次性 token 与 `ws://127.0.0.1:…`；PTY `cwd` 为会话 `workspace_path`。启用条件：`NODE_ENV !== "production"` 或 `AGENTHUB_ENABLE_TERMINAL=1`（`lib/terminal/websocket-server.ts`）。
+
+### 7.7 文件所有权（并行开发）
+
+按 `AGENTS.md`：
+
+| 职责 | 路径 |
+| --- | --- |
+| UI Shell | `app/`、`components/`（单聊接 API；群聊用 `lib/mock/`） |
+| DB / API | `lib/db/`、`lib/conversations/`、`app/api/conversations/`、`app/api/messages/` |
+| 适配器 | `lib/adapters/`、`lib/adapters/types.ts` |
+| Orchestrator（V2+） | `lib/orchestrator/`，仅依赖适配器接口 |
+| 评审 / QA | 问题写入 `docs/state/TOFIX.md` |
+
+REST / SSE 字段约定见 `docs/design/API_CONTRACT.md`。

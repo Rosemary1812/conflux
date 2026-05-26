@@ -4,7 +4,7 @@ import { PanelRightClose, PanelRightOpen, TerminalSquare } from "lucide-react";
 import { ConversationSetup } from "@/components/chat/ConversationSetup";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
-import { groupMessages } from "@/lib/mock/conversations";
+import { groupMessages } from "@/lib/mock/group-conversation";
 
 type MessageStreamProps = {
   conversation: ConversationSummary | null;
