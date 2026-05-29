@@ -186,26 +186,58 @@ Agent（V3 补充）
 
 ### 7.2 数据模型
 
-定义于 `lib/db/schema.ts`（Drizzle + SQLite）。V1 **无** Provider 表。
+定义于 `lib/db/schema.ts`（Drizzle + SQLite）。V1 单聊、V1.5 交互桥接已落地；V2.0 仅定稿后续 migration，不执行破坏性 schema 变更。V2.1 增 Provider / Orchestrator settings；V2.2 执行群聊 roster migration；V2.3 再新增 Orchestrator run/task 表。
 
 | 表 | 要点 |
 | --- | --- |
 | `agents` | 内置目录：`slug`、`platform`、`enabled`；启动 seed |
 | `conversations` | `mode`：`single` \| `group`；`status`：`empty` \| `running` \| `done` \| `preview`；`locked_agent_id`、`workspace_path` |
-| `conversation_agents` | 单聊锁定行：`role=primary`，`(conversation_id, agent_id)` 唯一 |
-| `messages` | `role`：user/assistant/system/tool；`status`：pending/running/done/error/cancelled |
+| `conversation_agents` | V1 单聊锁定行；V2 改为群聊 roster，允许同一 `agent_id` 多实例 |
+| `messages` | `role`：user/assistant/system/tool；V2 扩展 `orchestrator` 与 author/task 关联字段 |
 | `message_attachments` | 本机 `storage_path` + metadata |
-| `agent_runs` | 单次执行；`started_at` / `finished_at` / `error` |
+| `agent_runs` | 单次执行；V1.5 `status` 含 `awaiting_interaction`；V2 增 `conversation_agent_id` |
+| `agent_interactions` | V1.5 Approval / Choice；含可空 `conversation_agent_id`、`orchestrator_task_id`，V2 直接复用 |
+| `agent_external_sessions` | 多轮 CLI/SDK session 复用；V2 Invoker 继续通过 `runs.ts` 使用 |
 | `artifacts` | 关联 `conversation`、`message`、`run`；adapter 事件或工作区 diff 快照 |
+
+**V2.0 定稿：V2.2 migration 步骤（conversation_agents / messages / agent_runs）**
+
+1. 在 migration 中临时关闭外键检查，创建新表或使用 SQLite 支持的 `ALTER TABLE` 增量；所有 DDL 在事务内执行。
+2. `conversation_agents` 新增：
+   - `alias TEXT NOT NULL DEFAULT ''`
+   - `display_name TEXT`
+   - `role_hint TEXT`
+   - `status TEXT NOT NULL DEFAULT 'idle'`
+   - `joined_at INTEGER`
+   - `runtime_context_json TEXT`
+3. 迁移旧数据：对既有单聊行，`alias = agents.slug`，`display_name = agents.name`，`status = 'active'`，`joined_at = COALESCE(locked_at, created_at)`，`role` 继续保留 `primary` 语义。
+4. 删除旧唯一约束 `UNIQUE(conversation_id, agent_id)`：SQLite 需重建 `conversation_agents` 表；新约束为 `UNIQUE(conversation_id, alias)`，并新增非唯一索引 `INDEX(conversation_id, agent_id)`。
+5. `messages` 新增 `author_conversation_agent_id TEXT`、`orchestrator_task_id TEXT`；`role` 约定扩展为 `orchestrator`。若当前 schema 用文本枚举，文档与类型同步；若有 check constraint，migration 同步放开。
+6. `agent_runs` 新增 `conversation_agent_id TEXT`，单聊历史可为空；V2 群聊 sub-agent run 必填。
+7. 保留 V1.5 `agent_interactions.conversation_agent_id` / `orchestrator_task_id` 字段，不重建交互表，后续 Invoker 只补写值。
+8. 回滚策略：备份旧 `conversation_agents` 表数据；回滚时先确认不存在同一 `conversation_id + agent_id` 多行，否则阻止回滚并提示需人工合并 alias；可移除新增列/索引并恢复旧唯一约束。`messages` 与 `agent_runs` 的新增 nullable 字段可安全丢弃。
+
+**Provider / Orchestrator 新表（后续 Phase）**
+
+- V2.1：`providers`、`orchestrator_settings`。
+- V2.3：`orchestrator_runs`、`orchestrator_tasks`。
 
 ### 7.3 单聊运行链路
 
-**创建会话**：`POST /api/conversations` → `createConversation()`，默认 `mode=single`；`mode=group` 直接 400。侧栏 `listConversations()` 仅返回 `mode=single` 且非空会话。
+**创建会话**：`POST /api/conversations` → `createConversation()`，默认 `mode=single`；V1/V1.5 中 `mode=group` 直接 400。V2.2 起放开 group 创建，但 V2.0 不改代码。
 
 **首条 @ 锁定**（`sendMessage` / `validateSingleChatMention`）：
 
 - 无 `conversation_agents` 行时：首条须且只能 `@` 一个 Agent，写入 `conversation_agents` 并设置 `conversations.locked_agent_id`。
 - 已锁定：正文中的 `@` 必须与锁定 Agent 一致，否则 400。
+
+**V2 alias / mention 设计（V2.2 实现）**：
+
+- `lib/agents/mention.ts` 保留现有 `parseAgentMentions` 作为初始化阶段 slug 解析：群聊首条有效消息必须包含两个或以上有效 Agent slug mention。
+- 初始化 roster 时按消息中出现顺序逐个写入 `conversation_agents`：同 slug 第一次 `alias = slug`，第二次 `alias = {slug}-2`，第三次 `alias = {slug}-3`。
+- `display_name` 默认取 `agents.name`；重复实例 UI 可显示为 `Name (2)`，但后端调度和后续 @ 均以 alias 为准。
+- 初始化后 composer / API 只接受已入群 alias；解析器需要提供 alias 模式，例如 `parseConversationAgentMentions(content, rosterAliases)`。@ 未入群 slug 返回 `V2 暂不支持中途邀请新 Agent，请新建群聊。`
+- Orchestrator 不是可 @ 的 Agent；创建群聊后作为控制平面自动加入消息流和右栏状态，不进入用户 mention 候选。
 
 **发消息与 Run**：
 
@@ -218,6 +250,10 @@ Agent（V3 补充）
 
 Run 结束后还可根据工作区目录 diff 写入 `artifacts`（`recordWorkspaceArtifacts`）。
 
+**V1.5 交互链路**：adapter 运行中发出 `interaction_required`，`runs.ts` 创建 `agent_interactions` 并把 run 标为 `awaiting_interaction`；`POST /api/interactions/:id/respond` 通过 `run-bridge` 唤醒同一 run。V2 Orchestrator 必须复用这条链路，不允许在 `lib/orchestrator/` 内另写审批/选项状态机。
+
+**V2 Invoker 设计约束**：Orchestrator 调度子 Agent 时只扩展 `startAgentRun({ conversationAgentId, orchestratorTaskId, taskPrompt })` / `drainAgentRun()`，不在 Invoker 里重写 adapter 循环。群聊 stop 在 `runs.ts` 增加 `conversationAgentId -> runId` 或 `taskId -> runId` 索引；单聊 stop 保持无 body。
+
 ### 7.4 AgentAdapter 契约
 
 `lib/adapters/types.ts`：
@@ -225,22 +261,27 @@ Run 结束后还可根据工作区目录 diff 写入 `artifacts`（`recordWorksp
 ```typescript
 type AgentAdapter = {
   platform: AgentPlatform | string;
+  capabilities: AdapterCapabilities;
   healthcheck(): Promise<AdapterHealth>;
   run(params: AdapterRunParams): AsyncIterable<AgentEvent>;
+  inspectRuntime?(): Promise<AgentRuntimeInfo>;
 };
 
 type AgentEvent =
   | { type: "text_delta"; delta: string }
   | { type: "artifact_created"; artifact: ArtifactPayload }
+  | { type: "interaction_required"; interaction: Omit<AgentInteraction, "id" | "status" | "response"> }
   | { type: "run_status"; status: string }
   | { type: "message_done" }
   | { type: "message_error"; error: string }
   | { type: "message_cancelled" };
 ```
 
-`lib/adapters/registry.ts` 按 `platform` 解析；V1 内置 Agent 走本机 CLI/OAuth，**不读 Provider**（§3.2）。附件路径经 `formatAttachmentContext()` 注入 prompt 上下文。
+`lib/adapters/registry.ts` 按 `platform` 解析；V1/V1.5 内置 Agent 走本机 CLI/OAuth，**不读 Provider**（§3.2）。附件路径经 `formatAttachmentContext()` 注入 prompt 上下文。
 
-SSE 对外事件类型见 `ConversationStreamEvent`（`stream-bus.ts`），与 adapter 事件经 `runs.ts` 映射。
+`capabilities.supportsApproval` / `supportsChoice` 是 V2 Planner 调度的重要输入：例如 Hermes 若为 `none`，不得作为 `implement_review` 主写 Agent。`inspectRuntime?()` 在 V2.1 实现；返回 unknown model 时 Planner 只按 capability / health / roster 调度，不按模型名硬猜。
+
+SSE 对外事件类型见 `ConversationStreamEvent`（`stream-bus.ts`），与 adapter 事件经 `runs.ts` 映射。V2 新增 `task_created` / `task_status` / `task_result` / `orchestrator_summary`，但子 Agent 文本仍走既有 `message_delta`，Approval / Choice 仍走 V1.5 `interaction_*`。
 
 ### 7.5 群聊 V1 边界
 

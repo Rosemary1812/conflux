@@ -165,6 +165,67 @@
 
 ---
 
+## V2 验收（分 Phase 勾选）
+
+> 依据 `docs/design/ExecutePlan/V2-群聊与Orchestrator实施计划.md`。V2 必须按 Phase 验收后再进入下一阶段；未通过项写入 `docs/state/TOFIX.md`，不要跨 Phase 抢做。
+
+### Phase V2.0：文档、契约与 schema 设计
+
+- [ ] **V1.5 复用点讲清楚**  
+  **如何验证**：`docs/design/API_CONTRACT.md` 明确列出 `agent_interactions`、`GET /api/conversations/:id/interactions`、`POST /api/interactions/:id/respond`、SSE `interaction_requested` / `interaction_resolved`、`run_status=awaiting_interaction`，并说明 V2 只补 `conversationAgentId` / `orchestratorTaskId`。
+
+- [ ] **V2 group / Provider / Orchestrator / SSE 增量契约齐备**  
+  **如何验证**：`API_CONTRACT.md` 有 Provider CRUD、Orchestrator settings、group create/send/stop、runtime inspection、`task_*` / `orchestrator_summary` SSE 草稿。
+
+- [ ] **破坏性 migration 与回滚策略书面定稿**  
+  **如何验证**：`TECH_DESIGN.md` §7.2 写明 `conversation_agents` 删除 `(conversation_id, agent_id)` 唯一约束、增加 `alias` / `display_name` / `status` / `joined_at` / `runtime_context_json`、新增 `(conversation_id, alias)` 唯一约束，以及回滚前须处理同 Agent 多实例冲突。
+
+- [ ] **alias 与 mention 规则定稿**  
+  **如何验证**：`TECH_DESIGN.md` §7.3 写明初始化阶段解析 Agent slug，后续只允许 @ 已入群 alias；重复 slug 生成 `slug`、`slug-2`、`slug-3`；Orchestrator 不可被 @。
+
+- [ ] **群聊任务进度位置明确**  
+  **如何验证**：文档明确消息流禁止内嵌 task-board；任务进度只在右栏 `GroupContext` 的「任务分派」区；Approval / Choice 只在对应 Agent 气泡下 inline。
+
+### Phase V2.1：Provider 与 runtime inspection
+
+- [ ] 可保存并测试 `openai_compatible` Provider。
+- [ ] Planner smoke 能通过已配置 Provider 完成一次 HTTP LLM 调用。
+- [ ] `modelName=unknown` 时 UI / Planner 不按模型名硬猜能力。
+- [ ] 单聊不退化。
+
+### Phase V2.2：群聊后端基础
+
+- [ ] 未选工作区不可发首条 / 后续群聊消息。
+- [ ] `@claude-code @claude-code` 初始化为 `claude-code` + `claude-code-2` 两行 roster。
+- [ ] 少于 2 个有效 mention 返回 400。
+- [ ] 初始化后 @ 新 slug 返回「请新建群聊」类错误。
+- [ ] 群聊 stop 只影响指定 `conversationAgentId` 的 run。
+- [ ] 单聊 stop 仍无 body，行为不变。
+
+### Phase V2.3：Orchestrator P0
+
+- [ ] Demo 主路径可跑：澄清 → 多 Agent 流式 → 汇总。
+- [ ] `single_agent` follow-up 可只派一个 Agent。
+- [ ] 子 Agent 触发 Approval 时 task `awaiting_interaction`，respond 后 resume 同一 run。
+- [ ] Hermes 等 `supportsApproval=none` 的 adapter 不被派为主写 Agent。
+- [ ] Orchestrator 不代述子 Agent 全文。
+
+### Phase V2.4：前端真实联动
+
+- [ ] 浏览器完成 V2 Demo 脚本。
+- [ ] 刷新后 pending interaction 可 respond；消息流无 task 卡片。
+- [ ] Approval / Choice 均在对应 Agent 气泡下；右栏无审批按钮 / 选项列表。
+- [ ] 右栏有任务分派列表且随 SSE 更新。
+- [ ] 单聊不退化。
+
+### Phase V2.5：QA 与收口
+
+- [ ] V2 总验收标准全部勾选。
+- [ ] `npm run typecheck` / `npm run build` 通过。
+- [ ] `roadmap.md`、V2 执行计划、本文档同步收口状态。
+
+---
+
 ## 明确不验收（V2 / V3）
 
 以下能力**不在 V1 阻塞范围**；误暴露入口应禁用并标注「即将支持」，评审时不按失败计：
