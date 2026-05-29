@@ -152,16 +152,30 @@
 
 ---
 
+## V1.5 必过（V2 前置，单聊）
+
+完成 V1 后、启动 V2 前，按 `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md` 勾选：
+
+- [ ] **Approval 单聊 inline**：触发写文件/命令审批 → 气泡下卡片批准/拒绝 → 同一 run 继续或失败；右栏不重复审批卡片
+- [ ] **Choice 单聊 inline**：Agent 弹出选项 → 点选或自定义 → 同一 run 继续
+- [ ] **交互可恢复**：刷新后 pending interaction 仍可 respond
+- [ ] **V1 单聊不退化**：发消息、SSE、stop、regenerate、产物、工作区仍可用
+
+**如何验证**：Claude Code（或首个可用 adapter）各跑一条 Approval 与一条 Choice 场景；Network 可见 `interaction_requested` SSE 与 `POST /api/interactions/:id/respond`。
+
+---
+
 ## 明确不验收（V2 / V3）
 
 以下能力**不在 V1 阻塞范围**；误暴露入口应禁用并标注「即将支持」，评审时不按失败计：
 
-- [ ] **群聊真实消息链路、Orchestrator、任务 DAG、并行调度、失败降级** — V2  
-- [ ] **群聊 `@` 初始化成员、动态邀请、`ConversationAgent` 运行时** — V2  
-- [ ] **设置页 Provider CRUD（anthropic / openai_compatible）** — V2  
-- [ ] **`OrchestratorService`、Planner 与执行 Agent 分离** — V2  
-- [ ] **`/agent-creator`、`/skill-creator`、`SkillRunner`、用户自建 Agent** — V3  
-- [ ] **Diff 应用、部署发布、版本历史** — PRD P2 / V3 择项  
+- [ ] **群聊 Approval / Choice UI** — V2.4（V1.5 仅单聊 UI + 共用 API）
+- [ ] **群聊真实消息链路、Orchestrator、任务 DAG、并行调度、失败降级** — V2
+- [ ] **群聊 `@` 初始化成员、动态邀请、`ConversationAgent` 运行时** — V2
+- [ ] **设置页 Provider CRUD（anthropic / openai_compatible）** — V2
+- [ ] **`OrchestratorService`、Planner 与执行 Agent 分离** — V2
+- [ ] **`/agent-creator`、`/skill-creator`、`SkillRunner`、用户自建 Agent** — V3
+- [ ] **Diff 应用、部署发布、版本历史** — PRD P2 / V3 择项
 - [ ] **Electron 桌面壳、移动端、云端多用户协作、完整一键部署** — 路线图暂缓  
 - [ ] **从浏览器拉起系统 Terminal 独立窗口；纯云端静态站下的 Terminal / Agent CLI** — V1 明确不做  
 

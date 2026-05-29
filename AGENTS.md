@@ -14,10 +14,11 @@
 除非人类明确调整阶段，否则按 `roadmap.md` 推进：
 
 1. V1：单聊端到端（前后端 + SQLite + SSE + 1～2 个真实适配器 + 右栏/产物/消息操作）；群聊页面用静态或模拟数据，不接 Orchestrator。
-2. V2：群聊与 Orchestrator 联调（对接 V1 已做好的群聊 UI）。
-3. V3：自建 Agent、Skill、Diff/部署等增强。
+2. **V1.5**：单聊跑通 Approval + 选项交互（同一 run 可 pause/resume）；契约预留群聊字段。详见 `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md`。
+3. V2：群聊与 Orchestrator 联调（复用 V1.5 交互 API/SSE；群聊 UI 接 Approval/Choice）。
+4. V3：自建 Agent、Skill、Diff/部署等增强。
 
-V1 不要实现群聊真实调度、Orchestrator、Skill；群聊 UI 可先行，后端按单聊建模即可。
+V1 不要实现群聊真实调度、Orchestrator、Skill；群聊 UI 可先行，后端按单聊建模即可。**V2 启动前须完成 V1.5。**
 
 ## 文件所有权规则
 

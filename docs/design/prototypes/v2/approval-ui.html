@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conflux · 审批 UI 示意（单聊 vs 群聊）</title>
+  <link rel="stylesheet" href="../v1/styles/feishu.css" />
+  <style>
+    .demo-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 18px;
+      background: #1f2329;
+      color: #edf0f5;
+      font-size: 13px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    .demo-bar strong {
+      font-size: 14px;
+    }
+
+    .demo-tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .demo-tab {
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: transparent;
+      color: #edf0f5;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+    }
+
+    .demo-tab.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .demo-note {
+      color: #acb2bd;
+      font-size: 12px;
+    }
+
+    body {
+      padding-top: 52px;
+    }
+
+    .scene {
+      display: none;
+      height: calc(100vh - 52px);
+    }
+
+    .scene.active {
+      display: block;
+    }
+
+    .scene .app-shell {
+      height: 100%;
+    }
+
+    /* ── Approval 专用组件 ── */
+
+    .approval-card {
+      margin-top: 10px;
+      border: 1px solid #ffd591;
+      background: linear-gradient(180deg, #fffbf0 0%, #fff7e6 100%);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .approval-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      font-weight: 600;
+      color: #ad6800;
+      font-size: 13px;
+    }
+
+    .approval-card-header .icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: #fa8c16;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    .approval-meta {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: var(--text-2);
+    }
+
+    .approval-meta dt {
+      display: inline;
+      font-weight: 600;
+      color: var(--text-1);
+    }
+
+    .approval-meta dd {
+      display: inline;
+      margin: 0;
+    }
+
+    .approval-meta .mono {
+      font-family: var(--mono);
+      font-size: 12px;
+      background: rgba(0, 0, 0, 0.04);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .approval-risk {
+      font-size: 12px;
+      color: var(--text-3);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-approve {
+      border: none;
+      background: var(--success);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .btn-reject {
+      border: 1px solid var(--border);
+      background: var(--bg-panel);
+      color: var(--text-1);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .approval-panel-card {
+      border: 1px solid var(--border);
+      border-left: 3px solid #fa8c16;
+      border-radius: 10px;
+      padding: 12px;
+      background: var(--bg-panel);
+      margin-bottom: 10px;
+    }
+
+    .approval-panel-card:last-child {
+      margin-bottom: 0;
+    }
+
+    .approval-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .approval-panel-head strong {
+      font-size: 13px;
+    }
+
+    .badge-pending {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #fff1e6;
+      color: #d46b08;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .badge-pending::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #fa8c16;
+      animation: pulse 1.4s ease infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.35;
+      }
+    }
+
+    .sender-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: #fff1e6;
+      color: #d46b08;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 6px;
+    }
+
+    .msg-row.system .msg-bubble {
+      background: var(--bg-subtle);
+      border: 1px dashed var(--border);
+      color: var(--text-2);
+      font-size: 13px;
+    }
+
+    .msg-row.system .msg-avatar {
+      background: var(--bg-hover);
+      color: var(--text-3);
+      font-size: 11px;
+    }
+
+    .callout {
+      position: absolute;
+      max-width: 220px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #1f2329;
+      color: #edf0f5;
+      font-size: 11px;
+      line-height: 1.45;
+      box-shadow: var(--shadow-md);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .callout::after {
+      content: "";
+      position: absolute;
+      width: 0;
+      height: 0;
+      border: 6px solid transparent;
+    }
+
+    .callout-left::after {
+      right: -12px;
+      top: 14px;
+      border-left-color: #1f2329;
+    }
+
+    .callout-right::after {
+      left: -12px;
+      top: 14px;
+      border-right-color: #1f2329;
+    }
+
+    .message-area {
+      position: relative;
+    }
+
+    .legend {
+      padding: 10px 16px;
+      background: var(--primary-soft);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.6;
+    }
+
+    .legend strong {
+      color: var(--text-1);
+    }
+
+    .context-highlight {
+      outline: 2px solid #fa8c16;
+      outline-offset: 2px;
+      border-radius: 10px;
+    }
+
+    .panel-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: #fa8c16;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="demo-bar">
+    <div>
+      <strong>审批 UI 示意</strong>
+      <span class="demo-note"> · 非最终实现，仅说明单聊 / 群聊的信息落点差异</span>
+    </div>
+    <div class="demo-tabs">
+      <button class="demo-tab active" data-scene="single" type="button">① 单聊：气泡下 inline 审批</button>
+      <button class="demo-tab" data-scene="group" type="button">② 群聊：右栏聚合 + 轻提示</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       场景 1：单聊
+       ═══════════════════════════════════════════════════════════ -->
+  <div class="scene active" id="scene-single">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-title">Conflux</div>
+        </div>
+        <div class="conv-list" style="padding-top:8px">
+          <div class="conv-item active">
+            <div class="conv-avatar">CC</div>
+            <div class="conv-meta">
+              <div class="conv-title-row">
+                <div class="conv-title">登录页重构</div>
+                <span class="conv-status" style="color:var(--warning)">等待批准</span>
+              </div>
+              <div class="conv-preview">Claude Code 请求写入文件…</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="legend">
+          <strong>单聊思路：</strong>只有 1 个 Agent → 审批卡片<strong>仅</strong>挂在 running 气泡下方（inline）。右栏保持 Agent 状态 / 工作区 /
+          产出，<strong>不重复</strong>展示审批卡片。
+        </div>
+        <header class="chat-header">
+          <div>
+            <h1>登录页重构</h1>
+            <div class="header-meta"><span>单聊 · Claude Code</span><span>·</span><span>会话阻塞中，等待你批准</span></div>
+          </div>
+          <span class="badge preview" style="background:#fff1e6;color:#d46b08;border:none">⏸ 待审批</span>
+        </header>
+
+        <div class="message-area">
+          <div class="msg-thread">
+            <div class="msg-date"><span>今天 15:02</span></div>
+
+            <div class="msg-row user">
+              <div class="msg-body">
+                <div class="msg-sender"><span>15:02</span></div>
+                <div class="msg-bubble">
+                  <p>@claude-code 帮我把登录页改成邮箱+密码，对接现有 <code>/api/auth</code></p>
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row" style="position:relative">
+              <div class="msg-avatar">CC</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Claude Code</span>
+                  <span class="sender-role live">运行中 · 等待批准</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>我先梳理了现有 auth 路由。接下来需要修改登录表单并写入 <code>app/login/page.tsx</code>。</p>
+                  <p style="margin-top:8px;color:var(--text-3);font-size:13px">（上方是 Agent 正常回复气泡，只放「人话 + 产物」，不放 CLI 原文）
+                  </p>
+                </div>
+
+                <!-- ★ 单聊核心：inline ApprovalCard -->
+                <div class="approval-card">
+                  <div class="approval-card-header">
+                    <span class="icon">!</span>
+                    <span>Claude Code 请求你的批准</span>
+                  </div>
+                  <dl class="approval-meta">
+                    <dt>操作：</dt>
+                    <dd>写入文件</dd><br />
+                    <dt>路径：</dt>
+                    <dd><span class="mono">app/login/page.tsx</span></dd><br />
+                    <dt>命令：</dt>
+                    <dd><span class="mono">Edit file (+142 lines)</span></dd>
+                  </dl>
+                  <div class="approval-risk">⚠ 将在当前工作区修改前端页面。批准后 Agent 继续执行；拒绝则本次 run 标记 failed。</div>
+                  <div class="approval-actions">
+                    <button class="btn-approve" type="button">✓ 批准</button>
+                    <button class="btn-reject" type="button">✕ 拒绝</button>
+                  </div>
+                </div>
+              </div>
+              <div class="callout callout-left" style="right:calc(100% + 12px);top:120px">
+                ① 主战场<br />审批按钮在这里<br />用户不用看右栏
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer-status"><span>⏸</span><span>Agent 等待批准中，批准或拒绝后可继续对话</span></div>
+          <div class="composer-shell">
+            <div class="composer-input"><textarea disabled placeholder="等待审批决定…"></textarea></div>
+          </div>
+        </div>
+      </main>
+
+      <div class="context-wrap" style="width:var(--context-w)">
+        <aside class="context-panel">
+          <div class="context-topbar">
+            <h2>当前上下文</h2>
+          </div>
+          <section class="context-section">
+            <div class="section-title">Agent 状态</div>
+            <div class="agent-stack-card">
+              <div class="agent-state-row">
+                <span class="status-dot running"></span>
+                <div><strong>Claude Code</strong>
+                  <div style="font-size:12px;color:var(--warning)">awaiting_approval</div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="context-section">
+            <div class="section-title">工作区</div>
+            <div class="task-card" style="margin-bottom:0">
+              <p>📁 <span class="mono">D:\coding\agent\AgentHub</span></p>
+            </div>
+          </section>
+          <section class="context-section">
+            <div class="section-title">产出文件</div>
+            <ul class="file-list">
+              <li>📄 暂无新产出（等待批准后继续）</li>
+            </ul>
+          </section>
+          <section class="context-section" style="border-bottom:none">
+            <div class="section-title">说明</div>
+            <p style="font-size:12px;color:var(--text-3);line-height:1.6">单聊右栏<strong>不展示</strong>审批卡片；批准/拒绝只在消息流 inline
+              卡片操作。会话 <code>status=running</code> 直至用户决定。</p>
+          </section>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       场景 2：群聊
+       ═══════════════════════════════════════════════════════════ -->
+  <div class="scene" id="scene-group">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-title">Conflux</div>
+        </div>
+        <div class="conv-list" style="padding-top:8px">
+          <div class="conv-item active">
+            <div class="conv-avatar stack"><span class="mini">C1</span><span class="mini">CX</span></div>
+            <div class="conv-meta">
+              <div class="conv-title-row">
+                <div class="conv-title">全栈功能开发</div>
+                <span class="conv-status" style="color:var(--warning)">1 待批</span>
+              </div>
+              <div class="conv-preview">Codex 请求执行 npm test</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="legend">
+          <strong>群聊思路：</strong>可能多个 Agent 同时 pending → <strong>右栏按 Agent 分组审批</strong>是主操作区。消息流只做轻提示（system 行 + 气泡标题
+          badge），不把 CLI 塞进正文。
+        </div>
+        <header class="chat-header">
+          <div>
+            <h1>全栈功能开发</h1>
+            <div class="header-meta"><span>群聊 · claude1 + codex1</span><span>·</span><span>Claude 已完成 · Codex
+                等待批准</span></div>
+          </div>
+          <span class="badge preview" style="background:#fff1e6;color:#d46b08;border:none">⏸ 1 项待审批</span>
+        </header>
+
+        <div class="message-area">
+          <div class="msg-thread">
+            <div class="msg-date"><span>今天 14:35</span></div>
+
+            <div class="msg-row user">
+              <div class="msg-body">
+                <div class="msg-sender"><span>14:35</span></div>
+                <div class="msg-bubble">
+                  <p>@claude1 @codex1 实现用户设置页：UI + API + 测试</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row">
+              <div class="msg-avatar purple">O</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Orchestrator</span>
+                  <span class="sender-role">计划</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>分工：claude1 做 UI，codex1 做 API 与测试。</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row">
+              <div class="msg-avatar">C1</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Claude 1</span>
+                  <span class="sender-role done">已完成</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>已完成 <code>app/settings/page.tsx</code> 表单与样式。</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 轻提示：system 行，不是大段 CLI -->
+            <div class="msg-row system">
+              <div class="msg-avatar">i</div>
+              <div class="msg-body">
+                <div class="msg-sender"><span class="sender-role">系统</span><span>14:38</span></div>
+                <div class="msg-bubble">
+                  <p>Codex 请求执行 <code>npm test</code>，请在<strong>右栏「待审批」</strong>中批准或拒绝。</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row" style="position:relative">
+              <div class="msg-avatar green">CX</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Codex</span>
+                  <span class="sender-role live">运行中</span>
+                  <span class="sender-badge">待批准 · 1</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>API 路由已写好，准备跑测试验证。等待你批准执行命令。</p>
+                  <p style="margin-top:8px;color:var(--text-3);font-size:13px">（气泡旁 badge 指向右栏；<strong>不放</strong>
+                    approve 按钮在这里，避免 N 个 Agent 时按钮散落）</p>
+                </div>
+              </div>
+              <div class="callout callout-left" style="right:calc(100% + 12px);top:8px">
+                ② 只做锚点<br />badge + 一行 system<br />操作在右栏
+              </div>
+            </div>
+
+            <div class="msg-row">
+              <div class="msg-avatar purple">O</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Orchestrator</span>
+                  <span class="sender-role">系统</span>
+                </div>
+                <div class="msg-bubble">
+                  <p style="font-size:13px;color:var(--text-2)">Codex 的任务已暂停，等待你的批准。Claude 1 的结果已保留；我不会代你点击批准。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer-status"><span>💬</span><span>可继续输入；Codex 的 task 处于 awaiting_approval，其他 Agent 不受影响</span>
+          </div>
+          <div class="composer-shell">
+            <div class="composer-input"><textarea placeholder="@codex1 测试通过后再补 edge case…"></textarea></div>
+          </div>
+        </div>
+      </main>
+
+      <div class="context-wrap" style="width:320px">
+        <aside class="context-panel context-highlight" style="position:relative">
+          <div class="context-topbar">
+            <h2>群聊上下文</h2>
+          </div>
+
+          <section class="context-section">
+            <div class="section-title">Agent 状态</div>
+            <div class="agent-stack-card">
+              <div class="agent-state-row">
+                <span class="status-dot done" style="background:var(--success)"></span>
+                <div><strong>Claude 1</strong>
+                  <div style="font-size:12px;color:var(--text-3)">done · task_1</div>
+                </div>
+              </div>
+              <div class="agent-state-row">
+                <span class="status-dot running"></span>
+                <div><strong>Codex</strong>
+                  <div style="font-size:12px;color:var(--warning)">awaiting_approval · task_2</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ★ 群聊核心：右栏聚合审批 -->
+          <section class="context-section">
+            <div class="section-title">待审批 <span class="panel-count">1</span></div>
+
+            <div
+              style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.04em">
+              Codex · task_2</div>
+            <div class="approval-panel-card">
+              <div class="approval-panel-head">
+                <strong>执行命令</strong>
+                <span class="badge-pending">待批准</span>
+              </div>
+              <dl class="approval-meta">
+                <dt>命令：</dt>
+                <dd><span class="mono">npm test</span></dd><br />
+                <dt>目录：</dt>
+                <dd><span class="mono">D:\coding\agent\AgentHub</span></dd><br />
+                <dt>风险：</dt>
+                <dd>运行项目测试脚本</dd>
+              </dl>
+              <div class="approval-actions">
+                <button class="btn-approve" type="button">✓ 批准</button>
+                <button class="btn-reject" type="button">✕ 拒绝</button>
+              </div>
+            </div>
+
+            <p style="font-size:11px;color:var(--text-3);margin-top:10px;line-height:1.5">
+              若有 2 个 Agent 同时 pending，这里会出现两个分组卡片，各带 conversation_agent_id + task_id。
+            </p>
+          </section>
+
+          <section class="context-section">
+            <div class="section-title">任务分派</div>
+            <div class="task-card"><strong>task_1</strong> Claude 1 · UI <span style="color:var(--success)">✓</span>
+            </div>
+            <div class="task-card"><strong>task_2</strong> Codex · 测试 <span style="color:var(--warning)">⏸ 待批</span>
+            </div>
+          </section>
+
+          <section class="context-section" style="border-bottom:none">
+            <div class="section-title">说明</div>
+            <p style="font-size:12px;color:var(--text-3);line-height:1.6">
+              只 pause 该 task/run；Claude 1 已完成不受影响。Scheduler: task → <code>awaiting_approval</code> → 用户 decision →
+              adapter 继续。
+            </p>
+          </section>
+
+          <div class="callout callout-right" style="left:-240px;top:180px">
+            ③ 群聊主战场<br />按 Agent 分组<br />可并行多项 pending
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll(".demo-tab").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        document.querySelectorAll(".demo-tab").forEach(function (t) { t.classList.remove("active"); });
+        document.querySelectorAll(".scene").forEach(function (s) { s.classList.remove("active"); });
+        tab.classList.add("active");
+        document.getElementById("scene-" + tab.dataset.scene).classList.add("active");
+      });
+    });
+  </script>
+</body>
+
+</html>

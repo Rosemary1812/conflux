@@ -14,7 +14,7 @@
 
 - **实现**：Phase 0–6 已收口；单聊端到端、群聊静态 UI、设计文档（`TECH_DESIGN.md` §7、`API_CONTRACT.md`、`REVIEW_CHECKLIST.md`）已就绪，可本机 Demo / 答辩。
 - **验收**：按 `docs/design/REVIEW_CHECKLIST.md` 人工勾选；未勾 P0 或已知遗留见 `docs/state/TOFIX.md`、`docs/state/TODO.md`（如引用回复、附件真实 Agent 端到端 smoke）。
-- **下一主线**：V2 群聊 + Orchestrator + Provider。
+- **下一主线**：V1.5 交互桥接（Approval + 选项）→ 再 V2 群聊 + Orchestrator + Provider。
 
 ### 单聊（必须跑通）
 
@@ -64,18 +64,51 @@
 
 - 主线进度以本文件为准；零散问题记入 `docs/state/`。
 
+## V1.5：交互桥接（Approval + 选项）— V1 与 V2 之间
+
+**目标**：在 **单聊** 跑通 Agent 运行中的 **审批** 与 **选项交互**；契约与数据模型预留群聊字段，V2 只接 UI 与 Orchestrator 挂起逻辑，不重做后端。
+
+**为何在此阶段做**：当前 adapter 为一次性 stdin、无交互事件；若直接进入 V2 多 Agent 写盘/提问，联调面过大。先在单聊验证 pause → 用户回应 → 同一 run 继续。
+
+**范围**：
+
+- 统一 `AgentInteraction`（`approval` | `choice`）、`agent_interactions` 表、`POST /api/interactions/:id/respond`、SSE `interaction_requested` / `interaction_resolved`。
+- 改造 `runs.ts` / adapter：run 可进入 `awaiting_interaction` 并在用户回应后 resume（Claude SDK `canUseTool` / AskUserQuestion 优先；CLI 限制写入 TOFIX）。
+- **单聊 UI**：Approval、Choice 均在消息流 inline 卡片（右栏不重复 Approval；见 `docs/design/prototypes/v2/approval-ui.html`）。
+- Schema 预留 `conversation_agent_id`、`orchestrator_task_id`（V1.5 可为空）。
+
+**明确不做**：
+
+- 群聊真实 API、Orchestrator、Provider。
+- 群聊 Approval/Choice **UI**（留 V2.4；后端事件 V1.5 已兼容）。
+
+**验收标准**：
+
+- 单聊：触发审批 → inline 批准/拒绝 → 同一 run 继续或失败。
+- 单聊：触发选项 → 点选或自定义 → 同一 run 继续。
+- 刷新后会话可恢复 pending 交互并完成 respond。
+- V1 单聊主链路不退化。
+- 实施细节见 `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md`。
+
+**记录**：通过后更新本节状态，再启动 V2。
+
 ## V2：群聊、Orchestrator 与 Provider
+
+**前置**：V1.5 验收通过（Approval + Choice 单聊 E2E；交互 API/SSE 可挂 `conversation_agent_id`）。
+
+**目标**：把 V1 已做好的群聊 UI 接上真实多 Agent 协作；落地统一 **Provider** 配置，供编排调度 Agent 接 API。
 
 **目标**：把 V1 已做好的群聊 UI 接上真实多 Agent 协作；落地统一 **Provider** 配置，供编排调度 Agent 接 API。
 
 **范围**：
 
-- 群聊模式：`@` 初始化、动态邀请、`ConversationAgent` 多实例。
+- **复用 V1.5 交互**：群聊 Approval 右栏聚合 + 消息流轻提示；Choice 按 Agent/task 挂接（见 V2 实施计划与 `approval-ui.html` 群聊 Tab）；Orchestrator 不代批、不代选。
+- 群聊模式：`@` 初始化、`ConversationAgent` 多实例（V2 不做动态邀请，见 V2 实施计划）。
 - 自研 `OrchestratorService`：规划 → 任务 DAG → 并行/串行调度 → 汇总。
 - **设置页 Provider（V2）**：支持多种协议（至少 `anthropic`、`openai_compatible`）；Base URL + API Key + 默认模型；CRUD 与启用/停用。
 - **OrchestratorPlanner / 调度 Agent**：自研 HTTP 客户端（**不**走 Claude Agent SDK），绑定 `openai_compatible` 等 Provider 完成规划 LLM 调用（见 `docs/design/TECH_DESIGN.md` §3.2）。
-- 消息流任务进度卡片与右侧任务分派区与真实 `Task` 状态联动。
-- 失败降级、代码冲突处理（按 PRD 优先级）。
+- 右侧任务分派区与真实 `Task` 状态联动（任务进度不在消息流内嵌卡片，见 V2 实施计划）。
+- 失败降级、代码冲突处理：**V2 不做**，留 P1/V3（与 V2 实施计划一致）。
 
 **验收标准**：
 

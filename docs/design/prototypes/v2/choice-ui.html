@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conflux · 选项交互 UI 示意（单聊）</title>
+  <link rel="stylesheet" href="../v1/styles/feishu.css" />
+  <style>
+    .demo-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 18px;
+      background: #1f2329;
+      color: #edf0f5;
+      font-size: 13px;
+    }
+
+    .demo-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .demo-tab {
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: transparent;
+      color: #edf0f5;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
+    .demo-tab.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    body {
+      padding-top: 52px;
+    }
+
+    .scene {
+      display: none;
+      height: calc(100vh - 52px);
+    }
+
+    .scene.active {
+      display: block;
+    }
+
+    .scene .app-shell {
+      height: 100%;
+    }
+
+    .legend {
+      padding: 10px 16px;
+      background: var(--primary-soft);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.6;
+    }
+
+    /* Choice 卡片：用蓝色系，与 Approval 橙色区分 */
+    .choice-card {
+      margin-top: 10px;
+      border: 1px solid #adc6ff;
+      background: linear-gradient(180deg, #f0f5ff 0%, #e6f4ff 100%);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .choice-card.resolved {
+      display: none;
+    }
+
+    .choice-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      font-weight: 600;
+      color: #0958d9;
+      font-size: 13px;
+    }
+
+    .choice-card-header .icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: var(--primary);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+
+    .choice-prompt {
+      font-size: 14px;
+      color: var(--text-1);
+      margin-bottom: 12px;
+      line-height: 1.55;
+    }
+
+    .choice-options {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .choice-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      width: 100%;
+      text-align: left;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg-panel);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    .choice-option:hover {
+      border-color: var(--primary);
+      background: #fafcff;
+    }
+
+    .choice-option.selected {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+      box-shadow: inset 0 0 0 1px var(--primary);
+    }
+
+    .choice-option .letter {
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--bg-input);
+      color: var(--text-2);
+      font-size: 12px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .choice-option.selected .letter {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .choice-option-body strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 2px;
+    }
+
+    .choice-option-body span {
+      font-size: 12px;
+      color: var(--text-3);
+      line-height: 1.4;
+    }
+
+    .choice-custom {
+      margin-bottom: 12px;
+    }
+
+    .choice-custom label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 6px;
+    }
+
+    .choice-custom textarea {
+      width: 100%;
+      min-height: 64px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-panel);
+      resize: vertical;
+    }
+
+    .choice-custom textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .choice-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn-submit {
+      border: none;
+      background: var(--primary);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .btn-submit:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-skip {
+      border: none;
+      background: transparent;
+      color: var(--text-3);
+      font-size: 12px;
+      padding: 8px;
+    }
+
+    .choice-resolved {
+      font-size: 13px;
+      color: var(--text-2);
+    }
+
+    .choice-resolved strong {
+      color: var(--text-1);
+    }
+
+    .choice-hint {
+      font-size: 11px;
+      color: var(--text-3);
+      margin-top: 8px;
+    }
+
+    .mono {
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="demo-bar">
+    <div><strong>选项交互 UI · 单聊</strong> <span style="color:#acb2bd">· 与 Approval 同位置，不同配色</span></div>
+    <div class="demo-tabs">
+      <button class="demo-tab active" data-scene="single" type="button">单选 A/B/C/D</button>
+      <button class="demo-tab" data-scene="custom" type="button">含「其他」自定义</button>
+    </div>
+  </div>
+
+  <!-- 场景 1：单选，点一项即提交 -->
+  <div class="scene active" id="scene-single">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-title">Conflux</div>
+        </div>
+        <div class="conv-list" style="padding:8px 16px">
+          <div class="conv-item active">
+            <div class="conv-avatar">CC</div>
+            <div class="conv-meta">
+              <div class="conv-title">登录页重构</div>
+              <div class="conv-preview">Claude 等你选择方案…</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <main class="main">
+        <div class="legend">
+          <strong>单选：</strong>选项挂在 running 气泡下方；点一项即提交，<strong>卡片随即消失</strong>，同一 run 继续流式输出——<strong>不做「已回答」只读
+            UI</strong>。V1.5 不做多选 UI（Claude/Codex 典型为单选 + 可选自定义）。
+        </div>
+        <header class="chat-header">
+          <div>
+            <h1>登录页重构</h1>
+            <div class="header-meta">单聊 · Claude Code · 等待你的选择</div>
+          </div>
+          <span class="badge preview" style="background:#e6f4ff;color:#0958d9;border:none">? 待选择</span>
+        </header>
+        <div class="message-area">
+          <div class="msg-thread">
+            <div class="msg-row user">
+              <div class="msg-body">
+                <div class="msg-bubble">
+                  <p>@claude-code 帮我把登录页改成邮箱+密码</p>
+                </div>
+              </div>
+            </div>
+            <div class="msg-row">
+              <div class="msg-avatar">CC</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Claude Code</span>
+                  <span class="sender-role live">运行中 · 等待选择</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>我看了现有代码，登录页可以几种做法，需要你定一下方向再继续写。</p>
+                </div>
+                <div class="choice-card">
+                  <div class="choice-card-header">
+                    <span class="icon">?</span>
+                    <span>请选择一种方案</span>
+                  </div>
+                  <p class="choice-prompt">登录页希望怎么实现？</p>
+                  <div class="choice-options">
+                    <button class="choice-option" type="button">
+                      <span class="letter">A</span>
+                      <span class="choice-option-body">
+                        <strong>Server Action 表单</strong>
+                        <span>Next.js Server Action + 服务端校验，改动集中在 app/login</span>
+                      </span>
+                    </button>
+                    <button class="choice-option" type="button">
+                      <span class="letter">B</span>
+                      <span class="choice-option-body">
+                        <strong>Client 组件 + /api/auth</strong>
+                        <span>前端 fetch 现有 REST，便于对接已有 API 契约</span>
+                      </span>
+                    </button>
+                    <button class="choice-option" type="button">
+                      <span class="letter">C</span>
+                      <span class="choice-option-body">
+                        <strong>先做静态 UI</strong>
+                        <span>不接 API，只出表单样式与校验占位</span>
+                      </span>
+                    </button>
+                  </div>
+                  <p class="choice-hint">点击一项 → 提交 → 卡片消失 → Agent 继续执行（无「已选择」回显）。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <div class="composer-status"><span>?</span><span>Agent 等待你的选择；选完后可继续对话</span></div>
+          <div class="composer-shell">
+            <div class="composer-input"><textarea disabled placeholder="请先完成上方选项…"></textarea></div>
+          </div>
+        </div>
+      </main>
+      <div class="context-wrap" style="width:var(--context-w)">
+        <aside class="context-panel">
+          <div class="context-topbar">
+            <h2>当前上下文</h2>
+          </div>
+          <section class="context-section">
+            <div class="section-title">Agent 状态</div>
+            <div class="agent-stack-card">
+              <div class="agent-state-row">
+                <span class="status-dot running"></span>
+                <div><strong>Claude Code</strong>
+                  <div style="font-size:12px;color:#0958d9">awaiting_choice</div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="context-section" style="border-bottom:none">
+            <div class="section-title">说明</div>
+            <p style="font-size:12px;color:var(--text-3);line-height:1.6">右栏<strong>不展示</strong>选项列表；与 Approval
+              一致，操作只在消息流 inline 卡片。</p>
+          </section>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景 2：自定义输入 -->
+  <div class="scene" id="scene-custom">
+    <div class="app-shell">
+      <main class="main" style="margin:0 auto;max-width:900px">
+        <div class="legend">
+          <strong>allowCustom：</strong>可选「其他」+ textarea；点「提交选择」后卡片消失，Agent 继续执行。不做已回答回显。
+        </div>
+        <div class="message-area" style="padding:24px">
+          <div class="msg-row">
+            <div class="msg-avatar">CC</div>
+            <div class="msg-body">
+              <div class="msg-bubble">
+                <p>你更倾向哪种鉴权方式？如果都不合适可以自行说明。</p>
+              </div>
+              <div class="choice-card">
+                <div class="choice-card-header"><span class="icon">?</span><span>请选择或填写</span></div>
+                <div class="choice-options">
+                  <button class="choice-option" type="button">
+                    <span class="letter">A</span>
+                    <span class="choice-option-body"><strong>邮箱 + 密码</strong></span>
+                  </button>
+                  <button class="choice-option" type="button">
+                    <span class="letter">B</span>
+                    <span class="choice-option-body"><strong>OAuth（GitHub）</strong></span>
+                  </button>
+                  <button class="choice-option selected" type="button">
+                    <span class="letter">D</span>
+                    <span class="choice-option-body"><strong>其他（自行说明）</strong></span>
+                  </button>
+                </div>
+                <div class="choice-custom">
+                  <label for="custom">补充说明</label>
+                  <textarea id="custom" placeholder="例如：仅 magic link，不要密码字段…">仅 magic link，不要密码字段</textarea>
+                </div>
+                <div class="choice-actions">
+                  <button class="btn-submit" type="button">提交选择</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll(".demo-tab").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        document.querySelectorAll(".demo-tab").forEach(function (t) { t.classList.remove("active"); });
+        document.querySelectorAll(".scene").forEach(function (s) { s.classList.remove("active"); });
+        tab.classList.add("active");
+        document.getElementById("scene-" + tab.dataset.scene).classList.add("active");
+      });
+    });
+  </script>
+</body>
+
+</html>
