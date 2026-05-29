@@ -4,6 +4,7 @@ import { PanelRightClose, PanelRightOpen, TerminalSquare } from "lucide-react";
 import { ConversationSetup } from "@/components/chat/ConversationSetup";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
+import type { InteractionDecision } from "@/lib/interactions/types";
 import { groupMessages } from "@/lib/mock/group-conversation";
 
 type MessageStreamProps = {
@@ -14,6 +15,7 @@ type MessageStreamProps = {
   isLoading: boolean;
   messages: MockMessage[];
   onRegenerate?: (messageId: string) => Promise<void>;
+  onRespondInteraction?: (interactionId: string, decision: InteractionDecision) => Promise<void>;
   onToggleContext: () => void;
   onToggleTerminal: () => void;
   view: ConversationView;
@@ -27,6 +29,7 @@ export function MessageStream({
   isLoading,
   messages,
   onRegenerate,
+  onRespondInteraction,
   onToggleContext,
   onToggleTerminal,
   view
@@ -80,7 +83,12 @@ export function MessageStream({
           <div className="message-thread">
             <div className="message-date">今天</div>
             {(isGroup ? groupMessages : messages).map((message) => (
-              <MessageBubble key={message.id} message={message} onRegenerate={isGroup ? undefined : onRegenerate} />
+              <MessageBubble
+                key={message.id}
+                message={message}
+                onRegenerate={isGroup ? undefined : onRegenerate}
+                onRespondInteraction={isGroup ? undefined : onRespondInteraction}
+              />
             ))}
           </div>
         )}

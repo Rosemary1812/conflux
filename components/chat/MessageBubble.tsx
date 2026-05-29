@@ -6,14 +6,18 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentIcon } from "@/components/agents/AgentIcon";
 import { ArtifactCard } from "@/components/chat/ArtifactCard";
+import { InteractionApprovalCard } from "@/components/chat/InteractionApprovalCard";
+import { InteractionChoiceCard } from "@/components/chat/InteractionChoiceCard";
 import type { MockMessage } from "@/lib/conversations/types";
+import type { InteractionDecision } from "@/lib/interactions/types";
 
 type MessageBubbleProps = {
   message: MockMessage;
   onRegenerate?: (messageId: string) => Promise<void>;
+  onRespondInteraction?: (interactionId: string, decision: InteractionDecision) => Promise<void>;
 };
 
-export function MessageBubble({ message, onRegenerate }: MessageBubbleProps) {
+export function MessageBubble({ message, onRegenerate, onRespondInteraction }: MessageBubbleProps) {
   const tone = message.tone ?? "agent";
   const canRegenerate = tone === "agent" && message.status !== "running" && Boolean(onRegenerate);
 
@@ -61,9 +65,28 @@ export function MessageBubble({ message, onRegenerate }: MessageBubbleProps) {
             </div>
           ) : null}
         </div>
+        {message.interactions?.map((interaction) =>
+          interaction.kind === "approval" ? (
+            <InteractionApprovalCard
+              interaction={interaction}
+              key={interaction.id}
+              onRespond={onRespondInteraction ?? noopRespond}
+            />
+          ) : (
+            <InteractionChoiceCard
+              interaction={interaction}
+              key={interaction.id}
+              onRespond={onRespondInteraction ?? noopRespond}
+            />
+          )
+        )}
       </div>
     </div>
   );
+}
+
+async function noopRespond() {
+  return undefined;
 }
 
 function legacyArtifact(artifact: NonNullable<MockMessage["artifact"]>) {

@@ -110,6 +110,14 @@ function NewConversationContext({ draftWorkspacePath, isGroup }: { draftWorkspac
 
 function SingleContext({ conversation, messages }: { conversation: ConversationSummary | null; messages: MockMessage[] }) {
   const agent = conversation?.lockedAgent;
+  const pendingInteraction = messages.flatMap((message) => message.interactions ?? [])[0];
+  const statusText = pendingInteraction
+    ? pendingInteraction.kind === "approval"
+      ? "等待审批"
+      : "等待选择"
+    : conversation?.status === "running"
+      ? "运行中"
+      : "待命";
 
   return (
     <div className="context-content">
@@ -119,7 +127,7 @@ function SingleContext({ conversation, messages }: { conversation: ConversationS
           <span className="context-agent-icon"><AgentIcon agent={agent?.slug ?? "claude-code"} size={24} /></span>
           <div>
             <strong>{agent?.name ?? "等待锁定 Agent"}</strong>
-            <p>{agent ? `已锁定 · ${conversation.status === "running" ? "运行中" : "待命"}` : "首条消息发送后锁定"}</p>
+            <p>{agent ? `已锁定 · ${statusText}` : "首条消息发送后锁定"}</p>
           </div>
         </div>
       </section>

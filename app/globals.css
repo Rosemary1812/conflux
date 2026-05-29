@@ -792,6 +792,150 @@ pre {
   background: var(--primary-soft);
 }
 
+.interaction-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+  padding: 11px 12px;
+}
+
+.interaction-card.approval {
+  border-color: rgba(184, 107, 0, 0.28);
+  background: rgba(184, 107, 0, 0.06);
+}
+
+.interaction-card.choice {
+  border-color: rgba(47, 111, 237, 0.24);
+  background: rgba(47, 111, 237, 0.05);
+}
+
+.interaction-header {
+  display: grid;
+  gap: 3px;
+}
+
+.interaction-header strong {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.interaction-kicker {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.interaction-details {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.interaction-details div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.interaction-details dt,
+.interaction-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.interaction-details dt {
+  color: var(--text-3);
+}
+
+.interaction-details dd {
+  color: var(--text-2);
+}
+
+.interaction-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.choice-options {
+  display: grid;
+  gap: 7px;
+}
+
+.choice-option {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 2px 8px;
+  width: 100%;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  padding: 9px 10px;
+  color: var(--text-1);
+  text-align: left;
+}
+
+.choice-option:hover {
+  border-color: rgba(47, 111, 237, 0.32);
+  background: var(--bg-subtle);
+}
+
+.choice-option span {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  grid-row: span 2;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.choice-option strong {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.choice-option small {
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.choice-custom {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.choice-custom textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--bg-panel);
+  color: var(--text-1);
+  padding: 9px 10px;
+}
+
+.choice-custom textarea:focus {
+  border-color: var(--primary);
+}
+
 .message-bubble p,
 .markdown-body p,
 .markdown-body h2,

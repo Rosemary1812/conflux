@@ -8,12 +8,14 @@ import { SettingsModal } from "@/components/settings/SettingsModal";
 import { ConversationSidebar } from "@/components/shell/ConversationSidebar";
 import type { AttachmentReference, ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
 import type { ConversationStreamEvent } from "@/lib/conversations/stream-bus";
+import type { AgentInteraction, InteractionDecision } from "@/lib/interactions/types";
 
 export function AppShell() {
   const [view, setView] = useState<ConversationView>("new-single");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MockMessage[]>([]);
+  const [pendingInteractions, setPendingInteractions] = useState<AgentInteraction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -26,6 +28,7 @@ export function AppShell() {
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const isActiveConversationRunning = activeConversation?.status === "running";
+  const messagesWithInteractions = attachInteractions(messages, pendingInteractions);
   const isNewConversation =
     view === "new-single" || view === "new-group" || (!activeConversation?.lockedAgent && messages.length === 0);
 
@@ -36,10 +39,12 @@ export function AppShell() {
   useEffect(() => {
     if (!activeConversationId || isGroup) {
       setMessages([]);
+      setPendingInteractions([]);
       return;
     }
 
     void loadMessages(activeConversationId);
+    void loadPendingInteractions(activeConversationId);
   }, [activeConversationId, isGroup]);
 
   useEffect(() => {
@@ -105,20 +110,49 @@ export function AppShell() {
           conversation.id === activeConversationId
             ? {
               ...conversation,
-              status: payload.status === "running" ? "running" : "done"
+              status:
+                payload.status === "running" || payload.status === "awaiting_interaction"
+                  ? "running"
+                  : "done"
             }
             : conversation
         )
       );
 
-      if (payload.status !== "running") {
+      if (payload.status !== "running" && payload.status !== "awaiting_interaction") {
         void loadConversations();
         void loadMessages(activeConversationId);
       }
     });
 
+    events.addEventListener("interaction_requested", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+
+      if (payload.type !== "interaction_requested") {
+        return;
+      }
+
+      setPendingInteractions((current) => [
+        ...current.filter((interaction) => interaction.id !== payload.interaction.id),
+        payload.interaction
+      ]);
+    });
+
+    events.addEventListener("interaction_resolved", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+
+      if (payload.type !== "interaction_resolved") {
+        return;
+      }
+
+      setPendingInteractions((current) =>
+        current.filter((interaction) => interaction.id !== payload.interactionId)
+      );
+    });
+
     events.onerror = () => {
-      events.close();
+      // Let EventSource keep its built-in retry behavior.
+      // Closing here makes the stream permanently dead after a transient error.
     };
 
     return () => events.close();
@@ -164,6 +198,21 @@ export function AppShell() {
       setMessages(payload.messages ?? []);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "加载消息失败。");
+    }
+  }
+
+  async function loadPendingInteractions(conversationId: string) {
+    try {
+      const response = await fetch(`/api/conversations/${conversationId}/interactions?status=pending`);
+      const payload = (await response.json()) as { interactions?: AgentInteraction[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "加载交互请求失败。");
+      }
+
+      setPendingInteractions(payload.interactions ?? []);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "加载交互请求失败。");
     }
   }
 
@@ -228,6 +277,7 @@ export function AppShell() {
         ...current.filter((conversation) => conversation.id !== payload.conversation!.id)
       ]);
       setMessages(payload.messages);
+      setPendingInteractions([]);
       setActiveConversationId(payload.conversation.id);
       setDraftWorkspacePath(payload.conversation.workspacePath);
       setView("single");
@@ -287,8 +337,32 @@ export function AppShell() {
         )
       );
       setMessages(payload.messages);
+      setPendingInteractions([]);
     } catch (regenerateError) {
       setError(regenerateError instanceof Error ? regenerateError.message : "重新生成失败。");
+    }
+  }
+
+  async function respondInteraction(interactionId: string, decision: InteractionDecision) {
+    setError(null);
+    setPendingInteractions((current) => current.filter((interaction) => interaction.id !== interactionId));
+
+    try {
+      const response = await fetch(`/api/interactions/${interactionId}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(decision)
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "提交回应失败。");
+      }
+    } catch (respondError) {
+      setError(respondError instanceof Error ? respondError.message : "提交回应失败。");
+      if (activeConversationId) {
+        void loadPendingInteractions(activeConversationId);
+      }
     }
   }
 
@@ -451,8 +525,9 @@ export function AppShell() {
           error={error}
           isContextCollapsed={contextCollapsed}
           isLoading={isLoading}
-          messages={messages}
+          messages={messagesWithInteractions}
           onRegenerate={regenerateMessage}
+          onRespondInteraction={respondInteraction}
           onToggleContext={() => setContextCollapsed((value) => !value)}
           onToggleTerminal={() => {
             setContextCollapsed(false);
@@ -481,7 +556,7 @@ export function AppShell() {
           conversation={activeConversation}
           draftWorkspacePath={draftWorkspacePath}
           mode={contextMode}
-          messages={messages}
+          messages={messagesWithInteractions}
           onResize={setContextWidth}
           onCloseTerminal={() => setContextMode("context")}
           view={view}
@@ -502,5 +577,25 @@ export function AppShell() {
         message.status === "running" ? { ...message, status: "cancelled" } : message
       )
     );
+    setPendingInteractions([]);
   }
+}
+
+function attachInteractions(messages: MockMessage[], interactions: AgentInteraction[]) {
+  if (interactions.length === 0) {
+    return messages;
+  }
+
+  return messages.map((message) => {
+    const messageInteractions = interactions.filter((interaction) => interaction.messageId === message.id);
+
+    if (messageInteractions.length === 0) {
+      return message;
+    }
+
+    return {
+      ...message,
+      interactions: messageInteractions
+    };
+  });
 }
