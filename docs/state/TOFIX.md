@@ -14,6 +14,96 @@
 
 ## 已做
 
+- 时间：2026-05-29 01:05
+  优先级：P1
+  所属范围：适配器 / Claude Code
+  问题/目标：经 AgentHub 接入的 Claude Code 在用户批准 Bash/Write 等需 `canUseTool` 审批的工具后，工具不执行并报 SDK 侧 Zod 校验错误（`updatedInput: expected record, received undefined`）；与命令内容、工作目录路径无关，凡走 Approval 且用户点「允许」的路径均可能失败。非 Windows 文件权限问题。
+  解决方案：`lib/adapters/claude-code.ts` 的 `createPermissionHandler` 在用户批准时按 [Claude Agent SDK 文档](https://code.claude.com/docs/en/agent-sdk/user-input) 返回 `{ behavior: "allow", updatedInput: input }`（可保留 `toolUseID`）；`deny` 分支保持 `{ behavior: "deny", message }` 不变。
+  涉及修改文件：`lib/adapters/claude-code.ts`
+  验收标准：单聊中触发 Bash 审批（如 `rmdir`、先 `cd` 再删目录）用户批准后命令实际执行且无 ZodError；Write/Edit 审批通过后文件变更生效；拒绝时 run 合理结束且 Claude 收到 deny message；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-29 15:23
+  验证结果：`createPermissionHandler` 的 allow 分支已返回 `updatedInput: input` 并保留 `toolUseID`；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-29 00:40
+  优先级：P1
+  所属范围：适配器 / OpenCode ACP
+  问题/目标：与 OpenCode 对话时，用户发送「你好你好你好」等消息后，助手气泡无正常回复，仅显示 `运行失败：OpenCode completed without returning assistant text.`；界面上看到的「你好你好你好」实为**用户消息**（`messages.role=user`），不是 assistant 输出。`lib/adapters/opencode.ts` 在 `connection.prompt()` 已正常结束（非 cancelled/refusal）但未收到任何 `agent_message_chunk`（`content.type === "text"`）映射的 `text_delta` 时触发该错误（约 224–226 行）。本地复现：`data/agenthub.sqlite` 会话 `3a6fb8f6-5684-4392-956f-e98e66f1a9b7`，`agent_runs.error` 为上述文案，assistant `content` 为空；同会话 `agent_external_sessions` 为 `resumeSession=true` / `resumedSession=true`，且前序存在 `cancelled` 或同类 error run。
+  解决方案：① 扩展 `eventFromSessionUpdate`，记录并映射 OpenCode 可能使用的其它 ACP `sessionUpdate` / content 形态（非 `agent_message_chunk`+`text`）；② 排查 `prompt` resolve 时立即 `queue.end()` 是否与迟到的 `sessionUpdate` 竞态，改为在确认无待处理 chunk 后再结束队列；③ `resumeSession`/`loadSession` 后若整轮无 chunk，回退 `newSession` 或从 prompt 结果中提取 assistant 文本作兜底；④ 增加可开关的 ACP 原始事件日志，便于对比「直接 `opencode acp` smoke 有 chunk、App 层无 chunk」的分叉。此前 TOFIX（2026-05-28）已做收尾 guard，本场景为同链路回归/未覆盖路径。
+  涉及修改文件：`lib/adapters/opencode.ts`、`lib/conversations/runs.ts`（若需改进 error 展示区分用户/助手内容）
+  验收标准：同一会话在「首条 `@opencode`」「普通 follow-up（如 `你好你好你好`）」及「取消上一轮后重试」三种路径下，前端均能显示非空 assistant 回复且 message/run 为 `done`；数据库 assistant `content` 非空；不再出现 `OpenCode completed without returning assistant text.`；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-29 15:23
+  验证结果：`eventFromSessionUpdate` 已改为通过通用文本提取读取 `agent_message_chunk.content`；`connection.prompt()` resolve 后延迟关闭队列以接住迟到的 `session/update`；无 chunk 时会尝试从 prompt result 中提取文本兜底；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-28 16:42
+  优先级：P1
+  所属范围：交互桥接 / API
+  问题/目标：Approval/Choice 的 resume 只依赖进程内 waiter，页面刷新、Next dev 热重载或服务重启后，用户点击批准/选择会把 `agent_runs` 改回 `running`，但实际 adapter run 已无法继续，单聊会卡在 running 或空回复。
+  解决方案：将 interaction waiter 提升为进程级 `globalThis` 单例，并在 `POST /api/interactions/:id/respond` 检测无法恢复的 waiter；不可恢复时将 interaction 标记为 `expired`，assistant message / run 标记为 `error`，conversation 回到 `done`。
+  涉及修改文件：`lib/interactions/run-bridge.ts`、`lib/interactions/service.ts`
+  验收标准：触发 Approval/Choice 后刷新页面或重启 dev server，再点击回应时不会出现无限 running；若不能恢复同一 run，前端显示明确失败状态；正常未刷新路径仍可同一 run 继续；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-28 20:45
+  验证结果：fake approval 正常回应后同一 run 继续并 `done`；重启 dev server 后回应旧 pending interaction 返回 409，message 为 `error`，interaction 为 `expired`；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-28 16:42
+  优先级：P1
+  所属范围：SSE / UI
+  问题/目标：pending interaction 只在首次 HTTP 查询和实时 `interaction_requested` 事件中进入前端；SSE 重连只 replay agent message，不 replay pending interactions，若交互创建发生在 `loadPendingInteractions()` 与 EventSource 订阅之间，或网络重连期间，用户将看不到 Approval/Choice 卡片。
+  解决方案：`/api/conversations/:id/stream` 在 connected replay 阶段订阅实时事件后补发当前 pending `interaction_requested`；前端继续按 interaction id 去重。
+  涉及修改文件：`app/api/conversations/[conversationId]/stream/route.ts`
+  验收标准：触发 Approval/Choice 后刷新页面、切换会话回来、断网重连或慢加载时，inline 卡片都能恢复显示且不重复；回应后卡片消失；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-28 20:45
+  验证结果：fake choice pending 后请求 SSE stream，connected replay 中包含 `interaction_requested`；回应后 interaction 为 `answered`，assistant message 为 `done`；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-28 16:42
+  优先级：P1
+  所属范围：适配器 / 会话连续性
+  问题/目标：Claude Code 和 OpenCode 每条用户消息都启动新的外部会话，只把最近消息拼成 prompt；没有持久化 Claude `sessionId`/`resume` 或 OpenCode ACP `sessionId`/`loadSession`，因此“持续会话”不是外部 Agent 的真实会话续接，工具上下文、内部状态和长会话能力会丢失。
+  解决方案：新增 `agent_external_sessions` 按 conversation/agent/platform 持久化外部 session id；`AdapterRunParams` 增加 `externalSessionId` 与 `saveExternalSessionId()`；Claude Code 保存 SDK `session_id` 并用 `resume`；OpenCode 按 capability 优先 `resumeSession`、其次 `loadSession`，失败才新建 session。
+  涉及修改文件：`lib/adapters/claude-code.ts`、`lib/adapters/opencode.ts`、`lib/adapters/types.ts`、`lib/conversations/runs.ts`、`lib/db/schema.ts`、`lib/db/client.ts`
+  验收标准：同一单聊后续消息能复用同一个外部 Agent 会话；刷新页面不影响下一轮续接；无法续接的 adapter 在设置/healthcheck 中明确降级说明；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-28 20:45
+  验证结果：OpenCode 同一会话第二轮回复 `OK2`，`agent_external_sessions` 保存同一个 `ses_...` 且 capabilities 为 `resumeSession=true`、`resumedSession=true`；Claude Code 同一会话第二轮回复 `OK2`，保存 Claude SDK UUID session；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-28 16:42
+  优先级：P2
+  所属范围：UI / 运行状态
+  问题/目标：前端把除 `running` 之外的所有 `run_status` 都当作终态处理；`awaiting_interaction` 会触发重新拉取 conversations/messages，增加交互事件竞态，并可能在用户等待批准时造成消息流闪烁或状态误判。
+  解决方案：前端将 `awaiting_interaction` 作为非终态处理，只在 `done`、`error`、`cancelled` 时刷新完整消息和会话列表。
+  涉及修改文件：`components/shell/AppShell.tsx`
+  验收标准：run 进入 awaiting interaction 时 composer 保持停止态且消息不闪烁；pending 卡片稳定显示；终态仍会刷新 artifacts/status；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-28 20:45
+  验证结果：fake approval / choice 进入 pending 后不会因 `awaiting_interaction` 触发终态刷新；respond 后最终状态正常刷新；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-28 16:03
+  优先级：P1
+  所属范围：适配器 / 消息流
+  问题/目标：Codex app-server 回复内容被重复追加两次；截图与 SQLite 最近消息均显示同一句 assistant 回复在单个消息 content 中重复拼接。
+  解决方案：`lib/adapters/codex.ts` 改为 delta 优先，记录本 turn 已输出文本；`item/completed` 只在没有 delta 或只缺后缀时补全文，不再把完整 agent message 二次追加。
+  涉及修改文件：`lib/adapters/codex.ts`
+  验收标准：`@codex 你好` 这类短回复在数据库 `messages.content` 和前端气泡中只出现一次；仍能正常流式显示；Codex turn 完成后 run/message 状态为 `done`；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-28 20:45
+  验证结果：`npm run typecheck`、`npm run build` 通过；真实 Codex app-server 普通回复 smoke 被当前账号 `Your workspace is out of credits. Add credits to continue.` 阻塞，未能在本机验证成功回复去重。
+
+- 时间：2026-05-28 16:03
+  优先级：P1
+  所属范围：适配器 / OpenCode ACP
+  问题/目标：OpenCode 在部分真实会话中不显示回复，数据库中存在 OpenCode assistant 消息 content 为空且 run 长时间停留 `running` 的记录；但直接 ACP smoke 可收到 `agent_message_chunk`，说明 OpenCode CLI 本身会产生回复，问题更可能在 AgentHub 的 OpenCode adapter/run 收尾链路或异常状态回写。
+  解决方案：OpenCode adapter 不再把 stderr 当 assistant 正文；区分 prompt resolve/reject、child close/error 和 queue 关闭；进程提前关闭或 prompt 失败时写 `message_error`，完成但未收到 assistant 文本时也明确 error，避免空内容 running。
+  涉及修改文件：`lib/adapters/opencode.ts`
+  验收标准：`@opencode 你好` 和一个读取项目类任务都能在前端显示 assistant 回复；数据库对应 assistant message 非空且状态最终为 `done` 或明确 `error/cancelled`，不能无限 `running`；直接 ACP smoke 与 `/api/messages` app 层 smoke 均通过；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-05-28 20:45
+  验证结果：`@opencode 只回复 OK，不要执行工具。` 返回 `OK` 且 message `done`；同会话第二轮返回 `OK2`；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-27 21:29
+  优先级：待定
+  所属范围：适配器
+  问题/目标：Claude Code / Codex 真实 CLI 适配器仍是一次性进程模型，V1.5 Approval / Choice 目前只能通过 fake adapter 验证 pause/resume，尚未接 SDK `canUseTool` / AskUserQuestion。
+  解决方案：Claude Code 改为 Claude Agent SDK，使用 `canUseTool` 映射 Approval，并通过 AgentHub MCP `request_choice` 映射 Choice；Codex 改为 `codex app-server` 长驻 JSON-RPC，映射 command/file/permissions approval 与 `request_user_input`/elicitation choice；OpenCode 改为 `opencode acp`，映射 ACP `session/request_permission` 与 elicitation；Hermes 保持 `noInteractionCapabilities`，因为当前 `hermes --oneshot` 路径没有可暂停控制通道。
+  涉及修改文件：`lib/adapters/claude-code.ts`、`lib/adapters/codex.ts`、`lib/adapters/opencode.ts`、`lib/adapters/fallback.ts`、`lib/adapters/fake.ts`、`lib/adapters/hermes.ts`、`lib/adapters/types.ts`、`lib/adapters/json-rpc-process.ts`、`package.json`、`package-lock.json`
+  验收标准：真实单聊 Agent 触发工具审批或选项提问时，前端收到 `interaction_requested`，用户 respond 后同一 `agent_run` 继续；拒绝审批会让 run 失败/结束。
+  完成时间：2026-05-28 15:00
+  验证结果：`npm run typecheck`、`npm run build` 通过；OpenCode ACP `initialize + session/new` smoke 通过；Codex app-server `initialize + thread/start` smoke 通过，并修正 `sessionStartSource` 为当前 CLI 接受的 `startup`。
+
 - 时间：2026-05-25 23:03
   优先级：P1
   所属范围：API / 适配器

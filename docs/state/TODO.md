@@ -4,6 +4,8 @@
 
 ## 待做
 
+> **主线变更（2026-05-27）**：Approval 与选项交互已升格为 **V1.5 主线**（`roadmap.md` + `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md`）。V2 启动前须完成 V1.5；群聊 Approval UI 在 V2.4 接入。
+
 - 时间：2026-05-25 11:57
   优先级：P2
   所属范围：适配器 / QA
