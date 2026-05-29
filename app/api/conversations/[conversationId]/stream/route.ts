@@ -1,5 +1,6 @@
 import { subscribeToConversation } from "@/lib/conversations/stream-bus";
 import { listMessages } from "@/lib/conversations/service";
+import { listConversationInteractions } from "@/lib/interactions/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,29 +16,33 @@ export async function GET(_: Request, context: RouteContext) {
 
   const stream = new ReadableStream({
     start(controller) {
-      controller.enqueue(encoder.encode("event: connected\ndata: {\"ok\":true}\n\n"));
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+
+      const unsubscribe = subscribeToConversation(conversationId, (event) => {
+        send(event.type, event);
+      });
+
+      send("connected", { ok: true });
 
       for (const message of listMessages(conversationId)) {
         if (message.tone === "agent" && message.status) {
-          controller.enqueue(
-            encoder.encode(
-              `event: message_replace\ndata: ${JSON.stringify({
-                type: "message_replace",
-                messageId: message.id,
-                content: message.body,
-                status: message.status
-              })}\n\n`
-            )
-          );
+          send("message_replace", {
+            type: "message_replace",
+            messageId: message.id,
+            content: message.body,
+            status: message.status
+          });
         }
       }
 
-      const unsubscribe = subscribeToConversation(conversationId, (event) => {
-        controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
-      });
+      for (const interaction of listConversationInteractions(conversationId, "pending")) {
+        send("interaction_requested", { type: "interaction_requested", interaction });
+      }
 
       const heartbeat = setInterval(() => {
-        controller.enqueue(encoder.encode("event: ping\ndata: {}\n\n"));
+        send("ping", {});
       }, 15000);
 
       cleanup = () => {
