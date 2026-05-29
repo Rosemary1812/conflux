@@ -1,3 +1,5 @@
+import type { AgentInteraction } from "@/lib/interactions/types";
+
 export type ConversationMode = "single" | "group";
 
 export type ConversationView = "new-single" | "single" | "new-group" | "group";
@@ -33,6 +35,7 @@ export type MockMessage = {
   body: string;
   attachments?: MessageAttachment[];
   artifacts?: ConversationArtifact[];
+  interactions?: AgentInteraction[];
   code?: string;
   artifact?: {
     title: string;

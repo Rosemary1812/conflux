@@ -4,9 +4,12 @@ import path from "node:path";
 import { getAdapter } from "@/lib/adapters/registry";
 import type { AdapterAttachment, AdapterMessage, AgentEvent } from "@/lib/adapters/types";
 import { getDb } from "@/lib/db/client";
-import { agentRuns, agents, artifacts, conversations, messages } from "@/lib/db/schema";
+import { agentExternalSessions, agentRuns, agents, artifacts, conversations, messages } from "@/lib/db/schema";
 import { publishConversationEvent } from "@/lib/conversations/stream-bus";
 import type { AgentSummary } from "@/lib/agents/types";
+import { cancelPendingRunInteractions, createInteraction } from "@/lib/interactions/service";
+import { waitForInteractionResponse } from "@/lib/interactions/run-bridge";
+import type { PendingAgentInteraction } from "@/lib/interactions/types";
 
 const activeRuns = new Map<string, AbortController>();
 const maxSnapshotFiles = 2500;
@@ -91,7 +94,7 @@ export function stopConversationRun(conversationId: string) {
     .orderBy(agentRuns.createdAt)
     .all()
     .reverse()
-    .find((item) => item.status === "running" || item.status === "pending");
+    .find((item) => item.status === "running" || item.status === "pending" || item.status === "awaiting_interaction");
 
   if (!run) {
     return null;
@@ -124,22 +127,45 @@ async function drainAgentRun({
   const beforeSnapshot = snapshotWorkspace(workspacePath);
 
   try {
+    const externalSession = getExternalSession(conversationId, agent.id, agent.platform);
+
     for await (const event of adapter.run({
       runId,
       conversationId,
       workspacePath,
       messages: getAdapterMessages(conversationId),
       attachments,
-      signal
+      externalSessionId: externalSession?.externalSessionId,
+      signal,
+      requestInteraction(interaction) {
+        return requestRunInteraction({
+          interaction,
+          conversationId,
+          runId,
+          messageId,
+          agentId: agent.id,
+          signal
+        });
+      },
+      saveExternalSessionId(sessionId, capabilities) {
+        saveExternalSession({
+          conversationId,
+          agentId: agent.id,
+          platform: agent.platform,
+          externalSessionId: sessionId,
+          capabilities
+        });
+      }
     })) {
-      content = handleAgentEvent({
+      content = await handleAgentEvent({
         event,
         content,
         conversationId,
         messageId,
         runId,
         workspacePath,
-        beforeSnapshot
+        beforeSnapshot,
+        signal
       });
     }
   } catch (error) {
@@ -159,14 +185,71 @@ async function drainAgentRun({
   }
 }
 
-function handleAgentEvent({
+function getExternalSession(conversationId: string, agentId: string, platform: string) {
+  return getDb()
+    .select()
+    .from(agentExternalSessions)
+    .where(
+      and(
+        eq(agentExternalSessions.conversationId, conversationId),
+        eq(agentExternalSessions.agentId, agentId),
+        eq(agentExternalSessions.platform, platform)
+      )
+    )
+    .get();
+}
+
+function saveExternalSession({
+  conversationId,
+  agentId,
+  platform,
+  externalSessionId,
+  capabilities
+}: {
+  conversationId: string;
+  agentId: string;
+  platform: string;
+  externalSessionId: string;
+  capabilities?: Record<string, unknown>;
+}) {
+  const now = Date.now();
+
+  getDb()
+    .insert(agentExternalSessions)
+    .values({
+      id: crypto.randomUUID(),
+      conversationId,
+      agentId,
+      platform,
+      externalSessionId,
+      capabilitiesJson: capabilities ? JSON.stringify(capabilities) : null,
+      createdAt: now,
+      updatedAt: now
+    })
+    .onConflictDoUpdate({
+      target: [
+        agentExternalSessions.conversationId,
+        agentExternalSessions.agentId,
+        agentExternalSessions.platform
+      ],
+      set: {
+        externalSessionId,
+        capabilitiesJson: capabilities ? JSON.stringify(capabilities) : null,
+        updatedAt: now
+      }
+    })
+    .run();
+}
+
+async function handleAgentEvent({
   event,
   content,
   conversationId,
   messageId,
   runId,
   workspacePath,
-  beforeSnapshot
+  beforeSnapshot,
+  signal
 }: {
   event: AgentEvent;
   content: string;
@@ -175,6 +258,7 @@ function handleAgentEvent({
   runId: string;
   workspacePath: string;
   beforeSnapshot: WorkspaceSnapshot;
+  signal: AbortSignal;
 }) {
   if (event.type === "text_delta") {
     const nextContent = `${content}${event.delta}`;
@@ -223,7 +307,50 @@ function handleAgentEvent({
       .run();
   }
 
+  if (event.type === "interaction_required") {
+    await requestRunInteraction({
+      interaction: {
+        kind: event.interaction.kind,
+        messageId: event.interaction.messageId,
+        payload: event.interaction.payload,
+        conversationAgentId: event.interaction.conversationAgentId,
+        orchestratorTaskId: event.interaction.orchestratorTaskId
+      },
+      conversationId,
+      runId,
+      messageId,
+      agentId: event.interaction.agentId,
+      signal
+    });
+  }
+
   return content;
+}
+
+async function requestRunInteraction({
+  interaction,
+  conversationId,
+  runId,
+  messageId,
+  agentId,
+  signal
+}: {
+  interaction: Omit<PendingAgentInteraction, "conversationId" | "runId" | "agentId">;
+  conversationId: string;
+  runId: string;
+  messageId: string;
+  agentId: string;
+  signal: AbortSignal;
+}) {
+  const created = createInteraction({
+    ...interaction,
+    conversationId,
+    runId,
+    messageId: interaction.messageId || messageId,
+    agentId
+  });
+
+  return waitForInteractionResponse(created, signal);
 }
 
 function hasArtifactForRunPath(runId: string, artifactPath: string) {
@@ -401,6 +528,7 @@ function markRunDone(conversationId: string, runId: string, messageId: string) {
   }
 
   const now = Date.now();
+  cancelPendingRunInteractions(runId);
   getDb().update(messages).set({ status: "done" }).where(eq(messages.id, messageId)).run();
   getDb()
     .update(agentRuns)
@@ -432,6 +560,7 @@ function markRunErrored({
   }
 
   const now = Date.now();
+  cancelPendingRunInteractions(runId);
   const currentMessage = getDb().select().from(messages).where(eq(messages.id, messageId)).get();
   getDb()
     .update(messages)
@@ -462,6 +591,7 @@ function markRunCancelled(conversationId: string, runId: string, messageId?: str
 
   const now = Date.now();
   const db = getDb();
+  cancelPendingRunInteractions(runId);
   const assistantMessageId =
     messageId ??
     db
@@ -496,5 +626,5 @@ function markRunCancelled(conversationId: string, runId: string, messageId?: str
 
 function isRunActive(runId: string) {
   const run = getDb().select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
-  return run?.status === "running" || run?.status === "pending";
+  return run?.status === "running" || run?.status === "pending" || run?.status === "awaiting_interaction";
 }

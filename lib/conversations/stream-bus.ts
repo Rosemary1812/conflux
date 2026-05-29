@@ -1,3 +1,5 @@
+import type { AgentInteraction, InteractionDecision, InteractionStatus } from "@/lib/interactions/types";
+
 export type ConversationStreamEvent =
   | {
       type: "message_replace";
@@ -19,8 +21,18 @@ export type ConversationStreamEvent =
   | {
       type: "run_status";
       runId: string;
-      status: "running" | "done" | "error" | "cancelled";
+      status: "running" | "awaiting_interaction" | "done" | "error" | "cancelled";
       error?: string;
+    }
+  | {
+      type: "interaction_requested";
+      interaction: AgentInteraction;
+    }
+  | {
+      type: "interaction_resolved";
+      interactionId: string;
+      status: InteractionStatus;
+      response?: InteractionDecision;
     };
 
 type Listener = (event: ConversationStreamEvent) => void;
