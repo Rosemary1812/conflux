@@ -89,7 +89,7 @@ export const agentRuns = sqliteTable("agent_runs", {
   agentId: text("agent_id")
     .notNull()
     .references(() => agents.id),
-  status: text("status", { enum: ["pending", "running", "done", "error", "cancelled"] })
+  status: text("status", { enum: ["pending", "running", "awaiting_interaction", "done", "error", "cancelled"] })
     .notNull()
     .default("pending"),
   startedAt: integer("started_at"),
@@ -98,6 +98,57 @@ export const agentRuns = sqliteTable("agent_runs", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 });
+
+export const agentInteractions = sqliteTable("agent_interactions", {
+  id: text("id").primaryKey(),
+  kind: text("kind", { enum: ["approval", "choice"] }).notNull(),
+  status: text("status", { enum: ["pending", "approved", "rejected", "answered", "expired", "cancelled"] })
+    .notNull()
+    .default("pending"),
+  conversationId: text("conversation_id")
+    .notNull()
+    .references(() => conversations.id, { onDelete: "cascade" }),
+  runId: text("run_id")
+    .notNull()
+    .references(() => agentRuns.id, { onDelete: "cascade" }),
+  messageId: text("message_id")
+    .notNull()
+    .references(() => messages.id, { onDelete: "cascade" }),
+  agentId: text("agent_id")
+    .notNull()
+    .references(() => agents.id),
+  conversationAgentId: text("conversation_agent_id").references(() => conversationAgents.id, { onDelete: "set null" }),
+  orchestratorTaskId: text("orchestrator_task_id"),
+  payloadJson: text("payload_json").notNull(),
+  responseJson: text("response_json"),
+  createdAt: integer("created_at").notNull(),
+  resolvedAt: integer("resolved_at")
+});
+
+export const agentExternalSessions = sqliteTable(
+  "agent_external_sessions",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    platform: text("platform").notNull(),
+    externalSessionId: text("external_session_id").notNull(),
+    capabilitiesJson: text("capabilities_json"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull()
+  },
+  (table) => ({
+    externalSessionIdx: uniqueIndex("agent_external_sessions_unique_idx").on(
+      table.conversationId,
+      table.agentId,
+      table.platform
+    )
+  })
+);
 
 export const artifacts = sqliteTable("artifacts", {
   id: text("id").primaryKey(),
