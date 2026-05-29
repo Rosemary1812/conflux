@@ -1,10 +1,17 @@
-import { formatAttachmentContext, type AgentAdapter, type AgentEvent, type AdapterRunParams } from "@/lib/adapters/types";
+import {
+  formatAttachmentContext,
+  noInteractionCapabilities,
+  type AgentAdapter,
+  type AgentEvent,
+  type AdapterRunParams
+} from "@/lib/adapters/types";
 import { runProcess } from "@/lib/adapters/process-runner";
 
 const wslDistro = process.env.AGENTHUB_HERMES_WSL_DISTRO ?? "Ubuntu-24.04";
 
 export const hermesAdapter: AgentAdapter = {
   platform: "hermes",
+  capabilities: noInteractionCapabilities,
   async healthcheck() {
     try {
       const result = await runHermesShell("command -v hermes && hermes --version", { timeoutMs: 60000 });

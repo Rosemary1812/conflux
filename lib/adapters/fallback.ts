@@ -1,9 +1,10 @@
-import type { AgentAdapter, AdapterRunParams } from "@/lib/adapters/types";
+import { noInteractionCapabilities, type AgentAdapter, type AdapterRunParams } from "@/lib/adapters/types";
 import { commandExists } from "@/lib/adapters/process-runner";
 
 export function unavailableCliAdapter(platform: string, command: string): AgentAdapter {
   return {
     platform,
+    capabilities: noInteractionCapabilities,
     async healthcheck() {
       const ok = await commandExists(command);
 
