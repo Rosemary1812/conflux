@@ -15,10 +15,35 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { mockProviders, type MockProvider } from "@/lib/mock/providers";
+
 type SettingsModalProps = {
   onClose: () => void;
   open: boolean;
+};
+
+type ProviderProtocol = "anthropic" | "openai_compatible";
+type ProviderStatus = "ok" | "error" | "unchecked";
+
+type ProviderSummary = {
+  id: string;
+  name: string;
+  protocol: ProviderProtocol;
+  baseUrl: string;
+  maskedKey: string;
+  defaultModel: string;
+  enabled: boolean;
+  lastCheckStatus: ProviderStatus;
+  lastCheckMessage?: string | null;
+  lastCheckedAt?: number | null;
+};
+
+type ProviderDraft = {
+  name: string;
+  protocol: ProviderProtocol;
+  baseUrl: string;
+  apiKey: string;
+  defaultModel: string;
+  enabled: boolean;
 };
 
 const tabs = [
@@ -119,20 +144,44 @@ export function SettingsModal({ onClose, open }: SettingsModalProps) {
 
 function AgentsPanel() {
   const [health, setHealth] = useState<Record<string, { ok: boolean; message: string }>>({});
+  const [runtimeInfo, setRuntimeInfo] = useState<
+    Record<string, { modelName: string; source: string; message: string }>
+  >({});
   const [checking, setChecking] = useState(false);
 
   async function refreshHealth() {
     setChecking(true);
 
     try {
-      const response = await fetch("/api/agents/health");
-      const payload = (await response.json()) as {
+      const [healthResponse, runtimeResponse] = await Promise.all([
+        fetch("/api/agents/health"),
+        fetch("/api/agents/runtime")
+      ]);
+      const healthPayload = (await healthResponse.json()) as {
         health?: Array<{ platform: string; ok: boolean; message: string }>;
+      };
+      const runtimePayload = (await runtimeResponse.json()) as {
+        runtime?: Array<{
+          platform: string;
+          runtime: { modelName: string; source: string; message: string };
+        }>;
       };
 
       setHealth(
         Object.fromEntries(
-          (payload.health ?? []).map((item) => [item.platform, { ok: item.ok, message: item.message }])
+          (healthPayload.health ?? []).map((item) => [item.platform, { ok: item.ok, message: item.message }])
+        )
+      );
+      setRuntimeInfo(
+        Object.fromEntries(
+          (runtimePayload.runtime ?? []).map((item) => [
+            item.platform,
+            {
+              modelName: item.runtime.modelName,
+              source: item.runtime.source,
+              message: item.runtime.message
+            }
+          ])
         )
       );
     } finally {
@@ -153,40 +202,177 @@ function AgentsPanel() {
           {checking ? "检测中..." : "重新检测全部"}
         </button>
         <HealthRow detail={health.claude_code?.message ?? "等待检测"} name="Claude Code" ok={health.claude_code?.ok} />
+        <RuntimeLine info={runtimeInfo.claude_code} />
         <HealthRow detail={health.codex?.message ?? "等待检测"} name="Codex" ok={health.codex?.ok} />
+        <RuntimeLine info={runtimeInfo.codex} />
         <HealthRow detail={health.hermes?.message ?? "等待检测"} name="Hermes" ok={health.hermes?.ok} />
+        <RuntimeLine info={runtimeInfo.hermes} />
         <HealthRow detail={health.opencode?.message ?? "等待检测"} name="OpenCode" ok={health.opencode?.ok} />
+        <RuntimeLine info={runtimeInfo.opencode} />
       </div>
     </section>
   );
 }
 
 function OrchestratorPanel() {
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [plannerProviderId, setPlannerProviderId] = useState("");
+  const [status, setStatus] = useState("加载中...");
+
+  async function loadSettings() {
+    const [providersResponse, settingsResponse] = await Promise.all([
+      fetch("/api/providers"),
+      fetch("/api/orchestrator/settings")
+    ]);
+    const providersPayload = (await providersResponse.json()) as { providers?: ProviderSummary[] };
+    const settingsPayload = (await settingsResponse.json()) as {
+      settings?: { plannerProviderId: string | null };
+    };
+    setProviders(providersPayload.providers ?? []);
+    setPlannerProviderId(settingsPayload.settings?.plannerProviderId ?? "");
+    setStatus("");
+  }
+
+  async function saveSettings() {
+    setStatus("保存中...");
+    const response = await fetch("/api/orchestrator/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plannerProviderId: plannerProviderId || null })
+    });
+    const payload = (await response.json()) as { error?: string };
+    setStatus(response.ok ? "已保存。" : payload.error ?? "保存失败。");
+  }
+
+  useEffect(() => {
+    void loadSettings().catch((error) => setStatus(String(error)));
+  }, []);
+
+  const plannerProviders = providers.filter((provider) => provider.enabled);
+
   return (
     <section>
       <h3>Orchestrator</h3>
-      <p className="desc">V2 才会启用真实编排；这里先展示它将如何从已保存 Provider 中选择模型服务。</p>
+      <p className="desc">V2.1 起，Planner 从已保存的 OpenAI Compatible Provider 中选择模型服务。</p>
       <div className="settings-card">
         <label className="field-label">默认 Provider</label>
-        <select>
-          {mockProviders.map((provider) => (
-            <option key={provider.id}>
+        <select value={plannerProviderId} onChange={(event) => setPlannerProviderId(event.target.value)}>
+          <option value="">未选择</option>
+          {plannerProviders.map((provider) => (
+            <option key={provider.id} value={provider.id}>
               {provider.name} · {provider.defaultModel}
             </option>
           ))}
         </select>
-        <label className="field-label">本次编排模型</label>
-        <input defaultValue={mockProviders[0].defaultModel} />
-        <p className="desc tight">Provider 的 API Key、Base URL 和协议在“Provider 与密钥”中维护。</p>
+        <p className="desc tight">
+          Provider 的 API Key、Base URL 和协议在“Provider 与密钥”中维护；已启用的 Provider 均可作为 Planner 候选。
+        </p>
+        <div className="inline-actions end">
+          <span className="desc tight">{status}</span>
+          <button className="primary-button" onClick={saveSettings} type="button">
+            保存设置
+          </button>
+        </div>
       </div>
     </section>
   );
 }
 
 function ProvidersPanel() {
-  const [selectedProviderId, setSelectedProviderId] = useState(mockProviders[0].id);
-  const selectedProvider =
-    mockProviders.find((provider) => provider.id === selectedProviderId) ?? mockProviders[0];
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [draft, setDraft] = useState<ProviderDraft>(emptyProviderDraft());
+  const [editingNew, setEditingNew] = useState(true);
+  const [status, setStatus] = useState("加载中...");
+
+  async function loadProviders(preferredId?: string) {
+    const response = await fetch("/api/providers");
+    const payload = (await response.json()) as { providers?: ProviderSummary[] };
+    const nextProviders = payload.providers ?? [];
+    const nextSelectedId = preferredId ?? selectedProviderId ?? nextProviders[0]?.id ?? "";
+    const selected =
+      nextProviders.find((provider) => provider.id === nextSelectedId) ?? nextProviders[0] ?? null;
+
+    setProviders(nextProviders);
+    if (selected) {
+      setSelectedProviderId(selected.id);
+      setDraft(providerToDraft(selected));
+      setEditingNew(false);
+    } else {
+      setSelectedProviderId("");
+      setDraft(emptyProviderDraft());
+      setEditingNew(true);
+    }
+    setStatus("");
+  }
+
+  useEffect(() => {
+    void loadProviders().catch((error) => setStatus(String(error)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function selectProvider(provider: ProviderSummary) {
+    setSelectedProviderId(provider.id);
+    setDraft(providerToDraft(provider));
+    setEditingNew(false);
+    setStatus("");
+  }
+
+  function startNewProvider() {
+    setSelectedProviderId("");
+    setDraft(emptyProviderDraft());
+    setEditingNew(true);
+    setStatus("");
+  }
+
+  async function saveProvider() {
+    setStatus("保存中...");
+    const response = await fetch(editingNew ? "/api/providers" : `/api/providers/${selectedProviderId}`, {
+      method: editingNew ? "POST" : "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft)
+    });
+    const payload = (await response.json()) as { provider?: ProviderSummary; error?: string };
+
+    if (!response.ok || !payload.provider) {
+      setStatus(payload.error ?? "保存失败。");
+      return;
+    }
+
+    await loadProviders(payload.provider.id);
+    setStatus("已保存。");
+  }
+
+  async function deleteSelectedProvider() {
+    if (editingNew || !selectedProviderId) {
+      startNewProvider();
+      return;
+    }
+
+    setStatus("删除中...");
+    const response = await fetch(`/api/providers/${selectedProviderId}`, { method: "DELETE" });
+    if (!response.ok) {
+      const payload = (await response.json()) as { error?: string };
+      setStatus(payload.error ?? "删除失败。");
+      return;
+    }
+
+    await loadProviders("");
+    setStatus("已删除。");
+  }
+
+  async function testSelectedProvider() {
+    if (editingNew || !selectedProviderId) {
+      setStatus("请先保存 Provider，再测试连接。");
+      return;
+    }
+
+    setStatus("测试中...");
+    const response = await fetch(`/api/providers/${selectedProviderId}/test`, { method: "POST" });
+    const payload = (await response.json()) as { message?: string; provider?: ProviderSummary; error?: string };
+    await loadProviders(payload.provider?.id ?? selectedProviderId);
+    setStatus(payload.message ?? payload.error ?? (response.ok ? "测试完成。" : "测试失败。"));
+  }
 
   return (
     <section>
@@ -198,27 +384,28 @@ function ProvidersPanel() {
         <div className="provider-list-panel">
           <div className="provider-panel-head">
             <strong>已保存 Provider</strong>
-            <button className="primary-button compact" type="button">
+            <button className="primary-button compact" onClick={startNewProvider} type="button">
               <Plus size={14} />
               新增
             </button>
           </div>
           <div className="provider-list">
-            {mockProviders.map((provider) => (
+            {providers.length === 0 ? <p className="desc tight">还没有保存的 Provider。</p> : null}
+            {providers.map((provider) => (
               <button
                 className={
-                  selectedProvider.id === provider.id ? "provider-row active" : "provider-row"
+                  selectedProviderId === provider.id && !editingNew ? "provider-row active" : "provider-row"
                 }
                 key={provider.id}
-                onClick={() => setSelectedProviderId(provider.id)}
+                onClick={() => selectProvider(provider)}
                 type="button"
               >
                 <span>
                   <strong>{provider.name}</strong>
                   <small>{formatProtocol(provider.protocol)}</small>
                 </span>
-                <span className={`provider-status ${provider.status}`}>
-                  {formatStatus(provider.status)}
+                <span className={`provider-status ${provider.lastCheckStatus}`}>
+                  {formatStatus(provider.lastCheckStatus)}
                 </span>
               </button>
             ))}
@@ -228,14 +415,22 @@ function ProvidersPanel() {
         <div className="provider-detail-panel">
           <div className="provider-detail-head">
             <div>
-              <h4>{selectedProvider.name}</h4>
-              <p>{selectedProvider.enabled ? "已启用" : "已停用"} · {selectedProvider.lastCheckedAt}</p>
+              <h4>{editingNew ? "新增 Provider" : draft.name}</h4>
+              <p>
+                {draft.enabled ? "已启用" : "已停用"} ·{" "}
+                {editingNew ? "未保存" : formatCheckedAt(providers.find((item) => item.id === selectedProviderId))}
+              </p>
             </div>
             <div className="inline-actions">
-              <button aria-label="编辑 Provider" className="secondary-icon-button" type="button">
+              <button aria-label="编辑 Provider" className="secondary-icon-button" onClick={startNewProvider} type="button">
                 <Pencil size={15} />
               </button>
-              <button aria-label="删除 Provider" className="secondary-icon-button danger" type="button">
+              <button
+                aria-label="删除 Provider"
+                className="secondary-icon-button danger"
+                onClick={deleteSelectedProvider}
+                type="button"
+              >
                 <Trash2 size={15} />
               </button>
             </div>
@@ -244,32 +439,44 @@ function ProvidersPanel() {
           <div className="settings-card form-stack provider-form">
             <label>
               名称
-              <input defaultValue={selectedProvider.name} key={`${selectedProvider.id}-name`} />
+              <input
+                value={draft.name}
+                onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))}
+              />
             </label>
             <label>
               API 协议
-              <select defaultValue={selectedProvider.protocol} key={`${selectedProvider.id}-protocol`}>
-                <option value="openai-compatible">OpenAI Compatible</option>
-                <option value="anthropic-compatible">Anthropic Compatible</option>
+              <select
+                value={draft.protocol}
+                onChange={(event) =>
+                  setDraft((value) => ({ ...value, protocol: event.target.value as ProviderProtocol }))
+                }
+              >
+                <option value="openai_compatible">OpenAI Compatible</option>
+                <option value="anthropic">Anthropic Compatible</option>
               </select>
             </label>
             <label>
               Base URL
-              <input defaultValue={selectedProvider.baseUrl} key={`${selectedProvider.id}-baseUrl`} />
+              <input
+                value={draft.baseUrl}
+                onChange={(event) => setDraft((value) => ({ ...value, baseUrl: event.target.value }))}
+              />
             </label>
             <label>
               API Key
               <input
-                defaultValue={selectedProvider.maskedKey}
-                key={`${selectedProvider.id}-apiKey`}
+                placeholder={editingNew ? "sk-..." : "留空表示不修改"}
+                value={draft.apiKey}
+                onChange={(event) => setDraft((value) => ({ ...value, apiKey: event.target.value }))}
                 type="password"
               />
             </label>
             <label>
               默认模型
               <input
-                defaultValue={selectedProvider.defaultModel}
-                key={`${selectedProvider.id}-model`}
+                value={draft.defaultModel}
+                onChange={(event) => setDraft((value) => ({ ...value, defaultModel: event.target.value }))}
               />
             </label>
             <div className="setting-row no-border">
@@ -278,14 +485,16 @@ function ProvidersPanel() {
                 <p>停用后不会出现在 Orchestrator 或自建 Agent 的选择列表中。</p>
               </div>
               <button
-                aria-pressed={selectedProvider.enabled}
-                className={selectedProvider.enabled ? "toggle on" : "toggle"}
+                aria-pressed={draft.enabled}
+                className={draft.enabled ? "toggle on" : "toggle"}
+                onClick={() => setDraft((value) => ({ ...value, enabled: !value.enabled }))}
                 type="button"
               />
             </div>
+            <p className="desc tight">{status}</p>
             <div className="inline-actions end">
-              <button className="secondary-button" type="button">测试连接</button>
-              <button className="primary-button" type="button">保存 Provider</button>
+              <button className="secondary-button" onClick={testSelectedProvider} type="button">测试连接</button>
+              <button className="primary-button" onClick={saveProvider} type="button">保存 Provider</button>
             </div>
           </div>
         </div>
@@ -352,6 +561,19 @@ function CustomAgentsPanel() {
   );
 }
 
+function RuntimeLine({
+  info
+}: {
+  info?: { modelName: string; source: string; message: string };
+}) {
+  return (
+    <p className="desc tight">
+      Runtime：{info?.modelName ?? "unknown"} · {info?.source ?? "unknown"} ·{" "}
+      {info?.message ?? "等待探测"}
+    </p>
+  );
+}
+
 function HealthRow({ detail, name, ok = false }: { detail: string; name: string; ok?: boolean }) {
   return (
     <div className="health-row">
@@ -365,11 +587,11 @@ function HealthRow({ detail, name, ok = false }: { detail: string; name: string;
   );
 }
 
-function formatProtocol(protocol: MockProvider["protocol"]) {
-  return protocol === "openai-compatible" ? "OpenAI Compatible" : "Anthropic Compatible";
+function formatProtocol(protocol: ProviderProtocol) {
+  return protocol === "openai_compatible" ? "OpenAI Compatible" : "Anthropic Compatible";
 }
 
-function formatStatus(status: MockProvider["status"]) {
+function formatStatus(status: ProviderStatus) {
   if (status === "ok") {
     return "可用";
   }
@@ -379,4 +601,34 @@ function formatStatus(status: MockProvider["status"]) {
   }
 
   return "未检测";
+}
+
+function emptyProviderDraft(): ProviderDraft {
+  return {
+    name: "",
+    protocol: "openai_compatible",
+    baseUrl: "",
+    apiKey: "",
+    defaultModel: "",
+    enabled: true
+  };
+}
+
+function providerToDraft(provider: ProviderSummary): ProviderDraft {
+  return {
+    name: provider.name,
+    protocol: provider.protocol,
+    baseUrl: provider.baseUrl,
+    apiKey: "",
+    defaultModel: provider.defaultModel,
+    enabled: provider.enabled
+  };
+}
+
+function formatCheckedAt(provider?: ProviderSummary) {
+  if (!provider?.lastCheckedAt) {
+    return "未检测";
+  }
+
+  return new Date(provider.lastCheckedAt).toLocaleString("zh-CN");
 }
