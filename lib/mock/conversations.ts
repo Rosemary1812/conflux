@@ -1,6 +1,5 @@
 import type { ConversationSummary, MockMessage } from "@/lib/conversations/types";
 
-/** 群聊 mock 见 {@link ./group-conversation.ts}，V1 不接 API。 */
 export const workspacePath = "D:\\coding\\agent\\AgentHub";
 
 export const mockConversations: ConversationSummary[] = [

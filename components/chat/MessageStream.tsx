@@ -3,9 +3,8 @@
 import { PanelRightClose, PanelRightOpen, TerminalSquare } from "lucide-react";
 import { ConversationSetup } from "@/components/chat/ConversationSetup";
 import { MessageBubble } from "@/components/chat/MessageBubble";
-import type { ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
+import type { ConversationSummary, ConversationView, MockMessage, RosterItem } from "@/lib/conversations/types";
 import type { InteractionDecision } from "@/lib/interactions/types";
-import { groupMessages } from "@/lib/mock/group-conversation";
 
 type MessageStreamProps = {
   conversation: ConversationSummary | null;
@@ -16,8 +15,10 @@ type MessageStreamProps = {
   messages: MockMessage[];
   onRegenerate?: (messageId: string) => Promise<void>;
   onRespondInteraction?: (interactionId: string, decision: InteractionDecision) => Promise<void>;
+  onStopAgent?: (conversationAgentId: string) => Promise<void>;
   onToggleContext: () => void;
   onToggleTerminal: () => void;
+  roster?: RosterItem[];
   view: ConversationView;
 };
 
@@ -30,12 +31,17 @@ export function MessageStream({
   messages,
   onRegenerate,
   onRespondInteraction,
+  onStopAgent,
   onToggleContext,
   onToggleTerminal,
+  roster,
   view
 }: MessageStreamProps) {
-  const isNew = view === "new-single" || view === "new-group" || (!conversation?.lockedAgent && messages.length === 0);
   const isGroup = view === "group" || view === "new-group";
+  const isNew =
+    view === "new-single" ||
+    view === "new-group" ||
+    (!isGroup && !conversation?.lockedAgent && messages.length === 0);
   const title = getTitle(view, conversation);
   const workspacePath = conversation?.workspacePath ?? draftWorkspacePath;
 
@@ -44,19 +50,17 @@ export function MessageStream({
       <header className="chat-header">
         <div>
           <h1>{title}</h1>
-          {isGroup ? (
-            <div className="header-meta">
-              <span>群聊预览态</span>
-              <span>V1 不接真实 Orchestrator</span>
-            </div>
-          ) : (
-            <div className="header-meta">
-              <span>{conversation?.lockedAgent ? `${conversation.lockedAgent.name} 已锁定` : "空白单聊"}</span>
-              <span>当前工作区 {formatWorkspace(workspacePath)}</span>
-            </div>
-          )}
+          <div className="header-meta">
+            <span>
+              {isGroup
+                ? conversation?.title ?? "群聊"
+                : conversation?.lockedAgent
+                  ? `${conversation.lockedAgent.name} 已锁定`
+                  : "空白单聊"}
+            </span>
+            <span>当前工作区 {formatWorkspace(workspacePath)}</span>
+          </div>
         </div>
-        {isGroup ? <span className="preview-badge">V1 仅 UI</span> : null}
         <div className="header-tools">
           <button
             aria-label={isContextCollapsed ? "展开右侧栏" : "收起右侧栏"}
@@ -82,12 +86,14 @@ export function MessageStream({
         ) : (
           <div className="message-thread">
             <div className="message-date">今天</div>
-            {(isGroup ? groupMessages : messages).map((message) => (
+            {messages.map((message) => (
               <MessageBubble
                 key={message.id}
                 message={message}
-                onRegenerate={isGroup ? undefined : onRegenerate}
-                onRespondInteraction={isGroup ? undefined : onRespondInteraction}
+                onRegenerate={onRegenerate}
+                onRespondInteraction={onRespondInteraction}
+                onStopAgent={onStopAgent}
+                roster={roster}
               />
             ))}
           </div>
@@ -113,7 +119,7 @@ function getTitle(view: ConversationView, conversation: ConversationSummary | nu
     case "new-group":
       return "新建群聊";
     case "group":
-      return "全栈功能开发";
+      return conversation?.title ?? "群聊";
     default:
       return conversation?.title ?? "新建聊天";
   }

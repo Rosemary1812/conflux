@@ -14,7 +14,6 @@ import {
   UsersRound
 } from "lucide-react";
 import { AgentIcon } from "@/components/agents/AgentIcon";
-import { groupConversations } from "@/lib/mock/group-conversation";
 import type { ConversationSummary, ConversationView } from "@/lib/conversations/types";
 
 type ConversationSidebarProps = {
@@ -107,11 +106,11 @@ export function ConversationSidebar({
           <span>聊天</span>
           <span>⌄</span>
         </div>
-        {[...activeConversations, ...groupConversations].map((conversation) => {
+        {activeConversations.map((conversation) => {
           const view = conversation.mode === "group" ? "group" : "single";
           const active =
             conversation.mode === "group"
-              ? activeView === "group"
+              ? activeView === "group" && activeConversationId === conversation.id
               : activeView === "single" && activeConversationId === conversation.id;
 
           return (
@@ -129,9 +128,7 @@ export function ConversationSidebar({
               ) : (
                 <button
                   className="conversation-main"
-                  onClick={() =>
-                    conversation.mode === "group" ? onSelectView(view) : onSelectConversation(conversation.id)
-                  }
+                  onClick={() => onSelectConversation(conversation.id)}
                   type="button"
                 >
                   <ConversationAvatar label={conversation.avatar} mode={conversation.mode} />
@@ -144,27 +141,25 @@ export function ConversationSidebar({
                   </span>
                 </button>
               )}
-              {conversation.mode === "single" ? (
-                <ConversationMenu
-                  archived={false}
-                  conversation={conversation}
-                  isOpen={openMenuId === conversation.id}
-                  onArchive={() => {
-                    onArchiveConversation(conversation.id, true);
-                    setOpenMenuId(null);
-                  }}
-                  onClose={() => setOpenMenuId(null)}
-                  onRename={() => startRename(conversation)}
-                  onRequestDelete={() => {
-                    setDeleteTargetId(conversation.id);
-                    setOpenMenuId(null);
-                  }}
-                  onToggle={() => {
-                    setDeleteTargetId(null);
-                    setOpenMenuId((current) => (current === conversation.id ? null : conversation.id));
-                  }}
-                />
-              ) : null}
+              <ConversationMenu
+                archived={false}
+                conversation={conversation}
+                isOpen={openMenuId === conversation.id}
+                onArchive={() => {
+                  onArchiveConversation(conversation.id, true);
+                  setOpenMenuId(null);
+                }}
+                onClose={() => setOpenMenuId(null)}
+                onRename={() => startRename(conversation)}
+                onRequestDelete={() => {
+                  setDeleteTargetId(conversation.id);
+                  setOpenMenuId(null);
+                }}
+                onToggle={() => {
+                  setDeleteTargetId(null);
+                  setOpenMenuId((current) => (current === conversation.id ? null : conversation.id));
+                }}
+              />
             </div>
           );
         })}

@@ -4,7 +4,14 @@ import { FileText, GripVertical, TerminalSquare, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { AgentIcon } from "@/components/agents/AgentIcon";
-import type { ConversationArtifact, ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
+import type {
+  ConversationArtifact,
+  ConversationSummary,
+  ConversationView,
+  GroupTask,
+  MockMessage,
+  RosterItem
+} from "@/lib/conversations/types";
 
 type ContextPanelProps = {
   conversation: ConversationSummary | null;
@@ -14,6 +21,8 @@ type ContextPanelProps = {
   onCloseTerminal: () => void;
   onResize: (width: number) => void;
   view: ConversationView;
+  roster?: RosterItem[];
+  tasks?: GroupTask[];
 };
 
 export function ContextPanel({
@@ -23,7 +32,9 @@ export function ContextPanel({
   messages,
   onCloseTerminal,
   onResize,
-  view
+  view,
+  roster,
+  tasks
 }: ContextPanelProps) {
   const isGroup = view === "group" || view === "new-group";
   const isNew = view === "new-single" || view === "new-group" || (!conversation?.lockedAgent && messages.length === 0);
@@ -64,7 +75,7 @@ export function ContextPanel({
       ) : isNew ? (
         <NewConversationContext draftWorkspacePath={draftWorkspacePath} isGroup={isGroup} />
       ) : isGroup ? (
-        <GroupContext />
+        <GroupContext roster={roster ?? []} tasks={tasks ?? []} />
       ) : (
         <SingleContext conversation={conversation} messages={messages} />
       )}
@@ -290,55 +301,47 @@ function formatWorkspace(workspacePath: string) {
   return workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? workspacePath;
 }
 
-function GroupContext() {
+function GroupContext({ roster, tasks }: { roster: RosterItem[]; tasks: GroupTask[] }) {
   return (
     <div className="context-content">
       <section className="context-section">
         <div className="section-title">参与上下文</div>
         <div className="agent-stack-card">
-          <AgentState name="Claude Code" status="已完成" tone="done" />
-          <AgentState name="Codex" status="进行中（mock）" tone="running" />
-          <AgentState name="Orchestrator" status="已分派 2 任务（mock）" tone="orchestrator" />
+          {roster.map((member) => (
+            <AgentState key={member.id} name={member.alias} slug={member.slug} status={statusLabel(member.status)} />
+          ))}
+          <AgentState name="Orchestrator" slug="orchestrator" status="调度中" />
         </div>
       </section>
       <section className="context-section">
         <div className="section-title">任务分派</div>
-        <div className="task-card compact">
-          <strong>task_1</strong>
-          <p>Claude Code · 设置页 UI</p>
-        </div>
-        <div className="task-card compact">
-          <strong>task_2</strong>
-          <p>Codex · API + 测试</p>
-        </div>
-      </section>
-      <section className="context-section">
-        <div className="section-title">V1 边界</div>
-        <p className="context-note">该页面只展示产品形态，不调用真实 Orchestrator 或多个 Agent。</p>
+        {tasks.length === 0 ? (
+          <p className="context-note">暂无任务</p>
+        ) : (
+          tasks.map((task) => (
+            <div className={`task-card compact ${task.status}`} key={task.id}>
+              <strong>{task.id}</strong>
+              <p>
+                {task.assigneeAlias} · {task.description.slice(0, 40)}
+                {task.description.length > 40 ? "..." : ""}
+              </p>
+              <em>
+                {task.status}
+                {task.error ? ` · ${task.error}` : ""}
+              </em>
+            </div>
+          ))
+        )}
       </section>
     </div>
   );
 }
 
-function AgentState({
-  name,
-  status,
-  tone
-}: {
-  name: string;
-  status: string;
-  tone: "done" | "running" | "orchestrator";
-}) {
+function AgentState({ name, slug, status }: { name: string; slug: string; status: string }) {
   return (
     <div className="agent-state-row">
       <span className="context-agent-icon">
-        {name === "Claude Code" ? (
-          <AgentIcon agent="claude-code" size={22} />
-        ) : name === "Codex" ? (
-          <AgentIcon agent="codex" size={22} />
-        ) : (
-          <AgentIcon agent="orchestrator" size={22} />
-        )}
+        <AgentIcon agent={slug} size={22} />
       </span>
       <div>
         <strong>{name}</strong>
@@ -346,4 +349,19 @@ function AgentState({
       </div>
     </div>
   );
+}
+
+function statusLabel(status: string) {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "idle":
+      return "待命";
+    case "active":
+      return "已激活";
+    case "unavailable":
+      return "不可用";
+    default:
+      return status;
+  }
 }

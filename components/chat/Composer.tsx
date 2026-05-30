@@ -10,6 +10,7 @@ type ComposerProps = {
   isGroup: boolean;
   isNewConversation: boolean;
   isRunning: boolean;
+  rosterAliases?: string[];
   workspacePath?: string;
   onSend: (content: string, attachments?: AttachmentReference[]) => Promise<boolean>;
   onStop: () => Promise<void>;
@@ -22,6 +23,7 @@ export function Composer({
   isGroup,
   isNewConversation,
   isRunning,
+  rosterAliases,
   workspacePath,
   onSend,
   onStop,
@@ -30,17 +32,18 @@ export function Composer({
   const [content, setContent] = useState("");
   const [attachments, setAttachments] = useState<AttachmentReference[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const contentRef = useRef(content);
   const attachmentsRef = useRef(attachments);
   const displayWorkspace = workspacePath ?? "未选择";
-  const placeholder = disabled
-    ? "V1 群聊只展示结构；V2 再接入 @agent 与真实分派"
-    : isGroup
+  const placeholder = isGroup
+    ? isNewConversation
       ? "@claude-code @codex 帮我并行做设置页 UI 和接口校验"
-      : isNewConversation
-        ? "@claude-code 帮我 review 当前分支改动"
-        : "继续补测试、帮我 review 这段代码，或整理当前产物到工作区";
+      : "继续对话，@ 已入群 Agent 的 alias"
+    : isNewConversation
+      ? "@claude-code 帮我 review 当前分支改动"
+      : "继续补测试、帮我 review 这段代码，或整理当前产物到工作区";
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -60,6 +63,17 @@ export function Composer({
 
     if (!content.trim() && attachments.length === 0) {
       return;
+    }
+
+    setValidationError(null);
+
+    if (isGroup && !isNewConversation && rosterAliases && rosterAliases.length > 0) {
+      const mentions = extractMentions(content);
+      const unknown = mentions.filter((m) => !rosterAliases.includes(m));
+      if (unknown.length > 0) {
+        setValidationError(`@${unknown[0]} 不在当前群聊中，请新建群聊重新添加。`);
+        return;
+      }
     }
 
     const sentContent = content;
@@ -145,11 +159,11 @@ export function Composer({
   return (
     <div className={disabled ? "composer-wrap disabled" : "composer-wrap"}>
       <div className="composer-status">
-        {disabled ? (
-          <span>群聊预览模式，发送已禁用</span>
-        ) : (
-          <span>{isSending ? "正在发送..." : attachmentError ?? error ?? "Cmd+Enter 发送"}</span>
-        )}
+        <span>
+          {isSending
+            ? "正在发送..."
+            : validationError ?? attachmentError ?? error ?? "Cmd+Enter 发送"}
+        </span>
       </div>
       <form className="composer-shell" onSubmit={handleSubmit}>
         {attachments.length > 0 ? (
@@ -170,6 +184,9 @@ export function Composer({
           onChange={(event) => {
             contentRef.current = event.target.value;
             setContent(event.target.value);
+            if (validationError) {
+              setValidationError(null);
+            }
           }}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -223,6 +240,11 @@ export function Composer({
       </form>
     </div>
   );
+}
+
+function extractMentions(text: string): string[] {
+  const matches = text.match(/@[a-zA-Z0-9_-]+/g);
+  return matches ? matches.map((m) => m.slice(1)) : [];
 }
 
 function formatBytes(size: number) {

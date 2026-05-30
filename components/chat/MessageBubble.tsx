@@ -8,37 +8,74 @@ import { AgentIcon } from "@/components/agents/AgentIcon";
 import { ArtifactCard } from "@/components/chat/ArtifactCard";
 import { InteractionApprovalCard } from "@/components/chat/InteractionApprovalCard";
 import { InteractionChoiceCard } from "@/components/chat/InteractionChoiceCard";
-import type { MockMessage } from "@/lib/conversations/types";
+import type { MockMessage, RosterItem } from "@/lib/conversations/types";
 import type { InteractionDecision } from "@/lib/interactions/types";
+import { Square } from "lucide-react";
 
 type MessageBubbleProps = {
   message: MockMessage;
+  roster?: RosterItem[];
   onRegenerate?: (messageId: string) => Promise<void>;
   onRespondInteraction?: (interactionId: string, decision: InteractionDecision) => Promise<void>;
+  onStopAgent?: (conversationAgentId: string) => Promise<void>;
 };
 
-export function MessageBubble({ message, onRegenerate, onRespondInteraction }: MessageBubbleProps) {
+export function MessageBubble({ message, roster, onRegenerate, onRespondInteraction, onStopAgent }: MessageBubbleProps) {
   const tone = message.tone ?? "agent";
   const canRegenerate = tone === "agent" && message.status !== "running" && Boolean(onRegenerate);
+
+  const rosterMember = message.authorConversationAgentId
+    ? roster?.find((r) => r.id === message.authorConversationAgentId)
+    : undefined;
+
+  const senderName =
+    tone === "orchestrator"
+      ? "Orchestrator"
+      : rosterMember
+        ? rosterMember.displayName ?? rosterMember.alias
+        : message.author;
+
+  const senderAvatar =
+    tone === "orchestrator" ? "orchestrator" : rosterMember ? rosterMember.slug : message.avatar;
+
+  const senderRole =
+    tone === "orchestrator"
+      ? "调度器"
+      : rosterMember
+        ? statusLabel(rosterMember.status)
+        : message.role;
+
+  const canStop =
+    message.status === "running" && message.authorConversationAgentId && onStopAgent;
 
   return (
     <div className={`message-row ${tone}`}>
       {tone !== "user" ? (
         <span className={`message-avatar ${tone}`}>
-          {message.avatar ? <AgentIcon agent={message.avatar} size={25} /> : null}
+          {senderAvatar ? <AgentIcon agent={senderAvatar} size={25} /> : null}
         </span>
       ) : null}
       <div className="message-body">
         <div className="message-sender">
-          {tone !== "user" ? <span className="sender-name">{message.author}</span> : null}
-          {message.role ? (
-            <span className={`sender-role ${message.status ?? ""}`}>{message.role}</span>
+          {tone !== "user" ? <span className="sender-name">{senderName}</span> : null}
+          {senderRole ? (
+            <span className={`sender-role ${message.status ?? ""}`}>{senderRole}</span>
           ) : null}
           {message.time ? <span>{message.time}</span> : null}
           {canRegenerate ? (
             <button className="message-action-button" onClick={() => onRegenerate?.(message.id)} type="button">
               <RotateCcw size={13} />
               重新生成
+            </button>
+          ) : null}
+          {canStop ? (
+            <button
+              className="message-action-button stop"
+              onClick={() => onStopAgent?.(message.authorConversationAgentId!)}
+              type="button"
+            >
+              <Square size={12} />
+              停止
             </button>
           ) : null}
         </div>
@@ -52,18 +89,6 @@ export function MessageBubble({ message, onRegenerate, onRespondInteraction }: M
           ) : null}
           {message.artifacts?.length ? <ArtifactCard artifacts={message.artifacts} /> : null}
           {message.artifact ? <ArtifactCard artifacts={legacyArtifact(message.artifact)} /> : null}
-          {message.tasks ? (
-            <div className="task-board">
-              {message.tasks.map((task) => (
-                <div className="task-card" key={task.id}>
-                  <strong>{task.id}</strong>
-                  <span>{task.owner}</span>
-                  <p>{task.title}</p>
-                  <em>{task.status}</em>
-                </div>
-              ))}
-            </div>
-          ) : null}
         </div>
         {message.interactions?.map((interaction) =>
           interaction.kind === "approval" ? (
@@ -83,6 +108,21 @@ export function MessageBubble({ message, onRegenerate, onRespondInteraction }: M
       </div>
     </div>
   );
+}
+
+function statusLabel(status: string) {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "idle":
+      return "待命";
+    case "active":
+      return "已激活";
+    case "unavailable":
+      return "不可用";
+    default:
+      return status;
+  }
 }
 
 async function noopRespond() {

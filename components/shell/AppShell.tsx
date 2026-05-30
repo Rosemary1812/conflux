@@ -6,7 +6,14 @@ import { MessageStream } from "@/components/chat/MessageStream";
 import { ContextPanel } from "@/components/context/ContextPanel";
 import { SettingsModal } from "@/components/settings/SettingsModal";
 import { ConversationSidebar } from "@/components/shell/ConversationSidebar";
-import type { AttachmentReference, ConversationSummary, ConversationView, MockMessage } from "@/lib/conversations/types";
+import type {
+  AttachmentReference,
+  ConversationSummary,
+  ConversationView,
+  GroupTask,
+  MockMessage,
+  RosterItem
+} from "@/lib/conversations/types";
 import type { ConversationStreamEvent } from "@/lib/conversations/stream-bus";
 import type { AgentInteraction, InteractionDecision } from "@/lib/interactions/types";
 
@@ -23,6 +30,8 @@ export function AppShell() {
   const [contextMode, setContextMode] = useState<"context" | "terminal">("context");
   const [contextWidth, setContextWidth] = useState(312);
   const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | undefined>();
+  const [roster, setRoster] = useState<RosterItem[]>([]);
+  const [orchestratorTasks, setOrchestratorTasks] = useState<GroupTask[]>([]);
 
   const isGroup = view === "group" || view === "new-group";
   const activeConversation =
@@ -30,25 +39,28 @@ export function AppShell() {
   const isActiveConversationRunning = activeConversation?.status === "running";
   const messagesWithInteractions = attachInteractions(messages, pendingInteractions);
   const isNewConversation =
-    view === "new-single" || view === "new-group" || (!activeConversation?.lockedAgent && messages.length === 0);
+    view === "new-single" || view === "new-group" || (!isGroup && !activeConversation?.lockedAgent && messages.length === 0);
 
   useEffect(() => {
     void loadConversations();
   }, []);
 
   useEffect(() => {
-    if (!activeConversationId || isGroup) {
+    if (!activeConversationId) {
       setMessages([]);
       setPendingInteractions([]);
+      setRoster([]);
+      setOrchestratorTasks([]);
       return;
     }
 
     void loadMessages(activeConversationId);
     void loadPendingInteractions(activeConversationId);
-  }, [activeConversationId, isGroup]);
+    void loadRoster(activeConversationId);
+  }, [activeConversationId]);
 
   useEffect(() => {
-    if (!activeConversationId || isGroup) {
+    if (!activeConversationId) {
       return;
     }
 
@@ -150,13 +162,54 @@ export function AppShell() {
       );
     });
 
+    events.addEventListener("task_created", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+      if (payload.type !== "task_created") return;
+      setOrchestratorTasks((current) => [
+        ...current.filter((t) => t.id !== payload.taskId),
+        {
+          id: payload.taskId,
+          assigneeAlias: payload.assigneeAlias,
+          role: payload.role,
+          description: payload.description,
+          status: "pending"
+        }
+      ]);
+    });
+
+    events.addEventListener("task_status", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+      if (payload.type !== "task_status") return;
+      setOrchestratorTasks((current) =>
+        current.map((t) =>
+          t.id === payload.taskId ? { ...t, status: payload.status, error: payload.error } : t
+        )
+      );
+    });
+
+    events.addEventListener("task_result", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+      if (payload.type !== "task_result") return;
+      setOrchestratorTasks((current) =>
+        current.map((t) =>
+          t.id === payload.taskId ? { ...t, summary: payload.summary } : t
+        )
+      );
+    });
+
+    events.addEventListener("orchestrator_summary", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+      if (payload.type !== "orchestrator_summary") return;
+      void loadMessages(activeConversationId);
+    });
+
     events.onerror = () => {
       // Let EventSource keep its built-in retry behavior.
       // Closing here makes the stream permanently dead after a transient error.
     };
 
     return () => events.close();
-  }, [activeConversationId, isGroup]);
+  }, [activeConversationId]);
 
   async function loadConversations(selectFirst = false) {
     setIsLoading(true);
@@ -216,6 +269,21 @@ export function AppShell() {
     }
   }
 
+  async function loadRoster(conversationId: string) {
+    try {
+      const response = await fetch(`/api/conversations/${conversationId}/roster`);
+      const payload = (await response.json()) as { roster?: RosterItem[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "加载群聊成员失败。");
+      }
+
+      setRoster(payload.roster ?? []);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "加载群聊成员失败。");
+    }
+  }
+
   function createSingleConversation() {
     setError(null);
     setDraftWorkspacePath(undefined);
@@ -225,9 +293,6 @@ export function AppShell() {
   }
 
   async function sendMessage(content: string, attachments: AttachmentReference[] = []) {
-    if (isGroup) {
-      return false;
-    }
     setError(null);
 
     try {
@@ -243,7 +308,7 @@ export function AppShell() {
         const response = await fetch("/api/conversations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "single", workspacePath })
+          body: JSON.stringify({ mode: isGroup ? "group" : "single", workspacePath })
         });
         const payload = (await response.json()) as { conversation?: ConversationSummary; error?: string };
 
@@ -280,7 +345,7 @@ export function AppShell() {
       setPendingInteractions([]);
       setActiveConversationId(payload.conversation.id);
       setDraftWorkspacePath(payload.conversation.workspacePath);
-      setView("single");
+      setView(isGroup ? "group" : "single");
       return true;
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "发送消息失败。");
@@ -311,6 +376,32 @@ export function AppShell() {
     } catch (stopError) {
       setError(stopError instanceof Error ? stopError.message : "停止生成失败。");
       markConversationIdle(activeConversationId);
+    }
+  }
+
+  async function stopAgent(conversationAgentId: string) {
+    if (!activeConversationId) {
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/conversations/${activeConversationId}/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationAgentId })
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "停止 Agent 失败。");
+      }
+
+      await loadMessages(activeConversationId);
+      await loadConversations();
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : "停止 Agent 失败。");
     }
   }
 
@@ -506,9 +597,10 @@ export function AppShell() {
         onOpenSettings={() => setSettingsOpen(true)}
         onRenameConversation={renameConversation}
         onSelectConversation={(conversationId) => {
+          const conversation = conversations.find((c) => c.id === conversationId);
           setActiveConversationId(conversationId);
-          setDraftWorkspacePath(conversations.find((conversation) => conversation.id === conversationId)?.workspacePath);
-          setView("single");
+          setDraftWorkspacePath(conversation?.workspacePath);
+          setView(conversation?.mode === "group" ? "group" : "single");
         }}
         onSelectView={(nextView) => {
           setView(nextView);
@@ -528,19 +620,22 @@ export function AppShell() {
           messages={messagesWithInteractions}
           onRegenerate={regenerateMessage}
           onRespondInteraction={respondInteraction}
+          onStopAgent={stopAgent}
           onToggleContext={() => setContextCollapsed((value) => !value)}
           onToggleTerminal={() => {
             setContextCollapsed(false);
             setContextMode((value) => (value === "terminal" ? "context" : "terminal"));
           }}
+          roster={roster}
           view={view}
         />
         <Composer
-          disabled={view === "group"}
+          disabled={false}
           error={error}
           isGroup={isGroup}
           isNewConversation={isNewConversation}
           isRunning={isActiveConversationRunning}
+          rosterAliases={roster.map((r) => r.alias)}
           workspacePath={activeConversation?.workspacePath ?? draftWorkspacePath}
           onSend={sendMessage}
           onStop={stopMessage}
@@ -559,6 +654,8 @@ export function AppShell() {
           messages={messagesWithInteractions}
           onResize={setContextWidth}
           onCloseTerminal={() => setContextMode("context")}
+          roster={roster}
+          tasks={orchestratorTasks}
           view={view}
         />
       ) : null}
