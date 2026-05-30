@@ -32,6 +32,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
+# claude
+.claude/
+
 # build / electron
 dist/
 release/
