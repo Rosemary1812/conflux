@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conflux · 群聊交互 UI 原型（带实现标注）</title>
+  <link rel="stylesheet" href="../v1/styles/feishu.css" />
+  <style>
+    .demo-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 18px;
+      background: #1f2329;
+      color: #edf0f5;
+      font-size: 13px;
+    }
+
+    .demo-bar .spec-link {
+      color: #8ab4ff;
+      font-size: 11px;
+    }
+
+    body {
+      padding-top: 72px;
+    }
+
+    .scene {
+      height: calc(100vh - 72px);
+    }
+
+    .scene .app-shell {
+      height: 100%;
+    }
+
+    .legend {
+      padding: 10px 16px;
+      background: var(--primary-soft);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.65;
+    }
+
+    .legend code {
+      font-size: 11px;
+    }
+
+    /* ── 标注系统（给后续实现 Agent 看）── */
+    .anno {
+      position: absolute;
+      z-index: 8;
+      max-width: 240px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      line-height: 1.5;
+      box-shadow: var(--shadow-md);
+      pointer-events: none;
+    }
+
+    .anno strong {
+      display: block;
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .anno-implement {
+      background: #1f2329;
+      color: #edf0f5;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .anno-implement .file {
+      color: #8ab4ff;
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .anno-warn {
+      background: #fff7e6;
+      color: #ad6800;
+      border: 1px solid #ffd591;
+    }
+
+    .anno-ok {
+      background: #f6ffed;
+      color: #389e0d;
+      border: 1px solid #b7eb8f;
+    }
+
+    .anno-no {
+      background: #fff1f0;
+      color: #cf1322;
+      border: 1px solid #ffa39e;
+      text-decoration: line-through;
+      opacity: 0.85;
+    }
+
+    .region-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 8px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      vertical-align: middle;
+    }
+
+    .region-label.stream {
+      background: #e6f4ff;
+      color: #0958d9;
+    }
+
+    .region-label.panel {
+      background: #f9f0ff;
+      color: #531dab;
+    }
+
+    .message-area,
+    .context-wrap {
+      position: relative;
+    }
+
+    .msg-row.annotated {
+      position: relative;
+    }
+
+    .context-section.annotated {
+      position: relative;
+    }
+
+    /* Approval / Choice inline */
+    .approval-card {
+      margin-top: 10px;
+      border: 1px solid #ffd591;
+      background: linear-gradient(180deg, #fffbf0 0%, #fff7e6 100%);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .approval-card.resolved,
+    .choice-card.resolved {
+      display: none;
+    }
+
+    .approval-card-header,
+    .choice-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .approval-card-header {
+      color: #ad6800;
+    }
+
+    .choice-card-header {
+      color: #0958d9;
+    }
+
+    .approval-card-header .icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: #fa8c16;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    .choice-card-header .icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: var(--primary);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .approval-meta {
+      font-size: 13px;
+      color: var(--text-2);
+      margin-bottom: 10px;
+      line-height: 1.7;
+    }
+
+    .approval-meta .mono {
+      font-family: var(--mono);
+      font-size: 12px;
+      background: rgba(0, 0, 0, 0.04);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .approval-risk {
+      font-size: 12px;
+      color: var(--text-3);
+      margin-bottom: 12px;
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-approve {
+      border: none;
+      background: var(--success);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .btn-reject {
+      border: 1px solid var(--border);
+      background: var(--bg-panel);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .choice-card {
+      margin-top: 10px;
+      border: 1px solid #adc6ff;
+      background: linear-gradient(180deg, #f0f5ff 0%, #e6f4ff 100%);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+
+    .choice-prompt {
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .choice-options {
+      display: grid;
+      gap: 8px;
+    }
+
+    .choice-option {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      text-align: left;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg-panel);
+      cursor: pointer;
+    }
+
+    .choice-option .letter {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--bg-input);
+      font-size: 12px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .choice-option-body strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .choice-option-body span {
+      font-size: 12px;
+      color: var(--text-3);
+    }
+
+    .resume-line {
+      display: none;
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--text-2);
+    }
+
+    .resume-line.visible {
+      display: block;
+    }
+
+    .task-card.compact {
+      font-size: 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      background: var(--bg-panel);
+    }
+
+    .task-card.compact p {
+      margin: 4px 0 0;
+      color: var(--text-3);
+      font-size: 12px;
+    }
+
+    .context-note {
+      font-size: 12px;
+      color: var(--text-3);
+      line-height: 1.6;
+    }
+
+    .ghost-section {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 2px dashed #ffa39e;
+      border-radius: 8px;
+      background: #fff1f0;
+      opacity: 0.7;
+    }
+
+    .ghost-section .section-title {
+      color: #cf1322;
+      text-decoration: line-through;
+    }
+
+    .ghost-section p {
+      font-size: 11px;
+      color: #cf1322;
+      margin: 6px 0 0;
+      line-height: 1.5;
+    }
+
+    .impl-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin-top: 6px;
+    }
+
+    .impl-table th,
+    .impl-table td {
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .impl-table th {
+      background: var(--bg-subtle);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="demo-bar">
+    <div>
+      <strong>群聊交互 UI 原型 · 带实现标注</strong>
+      <div class="spec-link">对照代码：<code>components/context/ContextPanel.tsx</code> → <code>GroupContext</code></div>
+    </div>
+    <span style="color:#acb2bd;font-size:11px;max-width:420px;text-align:right">
+      橙色/绿色便签 = 给 Agent 的实现说明 · 红色虚线 = 群聊右栏<strong>不要</strong>做的区块
+    </span>
+  </div>
+
+  <div class="scene">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-title">Conflux</div>
+        </div>
+        <div class="conv-list" style="padding-top:8px">
+          <div class="conv-item active">
+            <div class="conv-avatar stack"><span class="mini">CC</span><span class="mini">CX</span></div>
+            <div class="conv-meta">
+              <div class="conv-title-row">
+                <div class="conv-title">登录模块开发</div>
+                <span class="conv-status" style="color:var(--warning)">等待交互</span>
+              </div>
+              <div class="conv-preview">Claude 等你选 · Codex 等你批</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="legend">
+          <table class="impl-table">
+            <thead>
+              <tr>
+                <th>区域</th>
+                <th>群聊 V2 做什么</th>
+                <th>代码落点</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>消息流 · 气泡下</td>
+                <td>Approval / Choice <strong>inline 操作</strong>（与单聊同一组件）</td>
+                <td><code>MessageBubble.tsx</code> + <code>Interaction*Card.tsx</code></td>
+              </tr>
+              <tr>
+                <td>右栏 · 参与上下文</td>
+                <td>各 Agent + Orchestrator <strong>状态文案</strong>（只读）</td>
+                <td><code>GroupContext</code> §参与上下文</td>
+              </tr>
+              <tr>
+                <td>右栏 · 任务分派</td>
+                <td>orchestrator_tasks 列表（只读，SSE 更新）</td>
+                <td><code>GroupContext</code> §任务分派</td>
+              </tr>
+              <tr>
+                <td>右栏 · 工作区 / 产出</td>
+                <td><strong>群聊已运行态不要</strong>（单聊 <code>SingleContext</code> 才有）</td>
+                <td>工作区在 Composer 选；new-group 用 <code>NewConversationContext</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <header class="chat-header">
+          <div>
+            <h1>登录模块开发</h1>
+            <div class="header-meta"><span>群聊 · claude-code + codex</span></div>
+          </div>
+        </header>
+
+        <div class="message-area">
+          <div class="anno anno-implement" style="top:8px;left:12px">
+            <strong>① 消息流 · 交互主战场</strong>
+            复用 V1.5：<code>InteractionApprovalCard</code> / <code>InteractionChoiceCard</code><br />
+            按 <code>messageId</code> + <code>conversationAgentId</code> 挂到对应 Agent 气泡下
+          </div>
+
+          <div class="msg-thread">
+            <div class="msg-date"><span>今天 15:02</span></div>
+
+            <div class="msg-row user">
+              <div class="msg-body">
+                <div class="msg-sender"><span>15:02</span></div>
+                <div class="msg-bubble">
+                  <p>@claude-code @codex 实现登录：UI + API + 测试</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row">
+              <div class="msg-avatar purple">O</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Orchestrator</span>
+                  <span class="sender-role">计划</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>分工：claude-code 做 UI；codex 做 API 与测试。</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row annotated">
+              <div class="msg-avatar">CC</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Claude Code</span>
+                  <span class="sender-role live" id="claude-role">运行中 · 等待选择</span>
+                  <span class="region-label stream">Choice inline</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>登录页框架已搭好，请确认布局：</p>
+                  <div class="choice-card" id="choice-card">
+                    <div class="choice-card-header">
+                      <span class="icon">?</span>
+                      <span>Claude Code 需要你选择</span>
+                    </div>
+                    <p class="choice-prompt">登录页采用哪种布局？</p>
+                    <div class="choice-options">
+                      <button class="choice-option" type="button" data-label="居中卡片">
+                        <span class="letter">A</span>
+                        <span class="choice-option-body"><strong>居中卡片</strong><span>单列表单 MVP</span></span>
+                      </button>
+                      <button class="choice-option" type="button" data-label="左右分栏">
+                        <span class="letter">B</span>
+                        <span class="choice-option-body"><strong>左右分栏</strong><span>品牌区 + 表单</span></span>
+                      </button>
+                    </div>
+                  </div>
+                  <p class="resume-line" id="choice-resume">按 <strong id="choice-picked"></strong> 继续…</p>
+                </div>
+              </div>
+              <div class="anno anno-ok" style="right:12px;top:0">
+                <strong>✓ 群聊 Choice</strong>
+                与单聊相同：卡片在气泡下，不在右栏
+              </div>
+            </div>
+
+            <div class="msg-row annotated">
+              <div class="msg-avatar green">CX</div>
+              <div class="msg-body">
+                <div class="msg-sender">
+                  <span class="sender-name">Codex</span>
+                  <span class="sender-role live" id="codex-role">运行中 · 等待批准</span>
+                  <span class="region-label stream">Approval inline</span>
+                </div>
+                <div class="msg-bubble">
+                  <p>API 路由已写好，准备跑测试。</p>
+                  <div class="approval-card" id="approval-card">
+                    <div class="approval-card-header">
+                      <span class="icon">!</span>
+                      <span>Codex 请求你的批准</span>
+                    </div>
+                    <div class="approval-meta">
+                      <div><strong>操作</strong> 执行命令</div>
+                      <div><strong>命令</strong> <span class="mono">npm test</span></div>
+                    </div>
+                    <div class="approval-risk">批准后继续；拒绝则 run 结束。</div>
+                    <div class="approval-actions">
+                      <button class="btn-approve" id="btn-approve" type="button">✓ 批准</button>
+                      <button class="btn-reject" id="btn-reject" type="button">✕ 拒绝</button>
+                    </div>
+                  </div>
+                  <p class="resume-line" id="approval-resume">测试通过…</p>
+                </div>
+              </div>
+              <div class="anno anno-ok" style="right:12px;top:0">
+                <strong>✓ 群聊 Approval</strong>
+                与单聊相同：按钮在气泡下，不在右栏
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer-status"><span>⏸</span><span>工作区在 Composer 工具栏选择，不在右栏展示</span></div>
+          <div class="composer-shell">
+            <div class="composer-input"><textarea placeholder="@claude-code …"></textarea></div>
+          </div>
+        </div>
+      </main>
+
+      <!-- 右栏：对齐 GroupContext.tsx，不是 SingleContext -->
+      <div class="context-wrap" style="width:var(--context-w)">
+        <aside class="context-panel">
+          <div class="context-topbar">
+            <h2>群聊上下文</h2>
+          </div>
+
+          <div class="anno anno-implement" style="top:48px;right:8px;left:8px;max-width:none">
+            <strong>② 右栏 · 对齐现有 GroupContext</strong>
+            <span class="file">ContextPanel.tsx → GroupContext()</span><br />
+            只有「参与上下文 + 任务分派」。<strong>无</strong>工作区、<strong>无</strong>产出文件、<strong>无</strong>审批按钮。
+          </div>
+
+          <div class="context-content" style="padding-top:88px">
+            <section class="context-section annotated">
+              <div class="section-title">
+                参与上下文
+                <span class="region-label panel">GroupContext §1</span>
+              </div>
+              <div class="agent-stack-card">
+                <div class="agent-state-row">
+                  <span class="context-agent-icon" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:var(--bg-subtle);border-radius:8px;font-size:11px;font-weight:700">CC</span>
+                  <div>
+                    <strong>Claude Code</strong>
+                    <p id="panel-claude" style="font-size:12px;color:var(--warning);margin:2px 0 0">等待选择 · task_ui</p>
+                  </div>
+                </div>
+                <div class="agent-state-row">
+                  <span class="context-agent-icon" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:var(--bg-subtle);border-radius:8px;font-size:11px;font-weight:700">CX</span>
+                  <div>
+                    <strong>Codex</strong>
+                    <p id="panel-codex" style="font-size:12px;color:var(--warning);margin:2px 0 0">等待批准 · task_api</p>
+                  </div>
+                </div>
+                <div class="agent-state-row">
+                  <span class="context-agent-icon" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:#f9f0ff;border-radius:8px;font-size:11px;font-weight:700">O</span>
+                  <div>
+                    <strong>Orchestrator</strong>
+                    <p style="font-size:12px;color:var(--text-3);margin:2px 0 0">已分派 2 任务</p>
+                  </div>
+                </div>
+              </div>
+              <p class="context-note" style="margin-top:8px">
+                V2：状态来自 orchestrator_tasks / agent_runs，文案如「等待批准」「运行中」。<strong>不</strong>在此放 Approval/Choice 控件。
+              </p>
+            </section>
+
+            <section class="context-section annotated">
+              <div class="section-title">
+                任务分派
+                <span class="region-label panel">GroupContext §2</span>
+              </div>
+              <div class="task-card compact" id="task-ui">
+                <strong>task_ui</strong>
+                <p>Claude Code · 登录页 UI · <span style="color:var(--warning)">⏸ 待选</span></p>
+              </div>
+              <div class="task-card compact" id="task-api">
+                <strong>task_api</strong>
+                <p>Codex · API + 测试 · <span style="color:var(--warning)">⏸ 待批</span></p>
+              </div>
+              <p class="context-note" style="margin-top:8px">
+                V2：接 SSE <code>task_status</code>。任务卡片在右栏，<strong>不要</strong>嵌进消息流气泡。
+              </p>
+            </section>
+
+            <!-- 故意展示「不要做」的区块，用红色虚线标注 -->
+            <section class="context-section ghost-section">
+              <div class="section-title">工作区 ← 群聊运行态不要</div>
+              <p>单聊 <code>SingleContext</code> 才有此 section。群聊工作区路径由 Composer 选择器 / <code>NewConversationContext</code>（新建空群时）处理，<strong>已运行群聊右栏不展示</strong>。</p>
+            </section>
+
+            <section class="context-section ghost-section" style="border-bottom:none">
+              <div class="section-title">产出文件 ← 群聊运行态不要</div>
+              <p>单聊 <code>SingleContext</code> 才有「产出文件」。群聊 V2 若需看产物，优先在消息流 artifact 卡片或后续单独设计，<strong>不要</strong>照搬单聊右栏结构。</p>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll(".choice-option").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.getElementById("choice-card").classList.add("resolved");
+        document.getElementById("choice-resume").classList.add("visible");
+        document.getElementById("choice-picked").textContent = btn.dataset.label;
+        document.getElementById("claude-role").textContent = "运行中";
+        document.getElementById("panel-claude").textContent = "运行中 · task_ui";
+        document.getElementById("panel-claude").style.color = "var(--success)";
+        document.getElementById("task-ui").innerHTML = "<strong>task_ui</strong><p>Claude Code · UI · <span style=\"color:var(--success)\">▶ 运行中</span></p>";
+      });
+    });
+
+    document.getElementById("btn-approve").addEventListener("click", function () {
+      document.getElementById("approval-card").classList.add("resolved");
+      document.getElementById("approval-resume").classList.add("visible");
+      document.getElementById("codex-role").textContent = "运行中";
+      document.getElementById("panel-codex").textContent = "运行中 · task_api";
+      document.getElementById("panel-codex").style.color = "var(--success)";
+      document.getElementById("task-api").innerHTML = "<strong>task_api</strong><p>Codex · 测试 · <span style=\"color:var(--success)\">▶ 运行中</span></p>";
+    });
+
+    document.getElementById("btn-reject").addEventListener("click", function () {
+      document.getElementById("approval-card").classList.add("resolved");
+      document.getElementById("codex-role").textContent = "已取消";
+      document.getElementById("panel-codex").textContent = "已取消 · task_api";
+      document.getElementById("panel-codex").style.color = "var(--text-3)";
+      document.getElementById("task-api").innerHTML = "<strong>task_api</strong><p>Codex · 测试 · <span style=\"color:var(--text-3)\">✕ 已拒绝</span></p>";
+    });
+  </script>
+</body>
+
+</html>

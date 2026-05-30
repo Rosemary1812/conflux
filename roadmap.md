@@ -96,6 +96,8 @@
 
 **前置**：V1.5 验收通过（Approval + Choice 单聊 E2E；交互 API/SSE 可挂 `conversation_agent_id`）。
 
+**状态（2026-05-30）**：V2.1 Provider + V2.2 群聊后端基础 + V2.3 Orchestrator P0 + V2.4 前端真实联动 + V2.5 QA 收口已完成。群聊主链路可跑通（新建 → @初始化 → Orchestrator 澄清/计划 → 子 Agent 分派 → 汇总），单聊功能不退化。
+
 **目标**：把 V1 已做好的群聊 UI 接上真实多 Agent 协作；落地统一 **Provider** 配置，供编排调度 Agent 接 API。
 
 **目标**：把 V1 已做好的群聊 UI 接上真实多 Agent 协作；落地统一 **Provider** 配置，供编排调度 Agent 接 API。

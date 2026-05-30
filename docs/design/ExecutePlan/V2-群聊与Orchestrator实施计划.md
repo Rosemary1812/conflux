@@ -1,229 +1,467 @@
 # V2 群聊与 Orchestrator 实施计划
 
-## 0. 前置：V1.5 交互桥接
+> **文档基线（2026-05-29）**：以当前仓库代码为准。V1 单聊 + 群聊静态 UI、**V1.5 交互桥接（Approval + Choice）** 已在代码中落地；V2 在此基础上接群聊真实链路与 Orchestrator，**不重做** V1.5 交互后端。
 
-**启动 V2 前必须完成** `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md`：
+---
 
-- 单聊 Approval、Choice 已在消息流 inline 跑通，且为 **同一 `agent_run` resume**。
-- 已有 `agent_interactions` 表与 `POST /api/interactions/:id/respond`、SSE `interaction_requested` / `interaction_resolved`。
-- 交互记录含可空 `conversation_agent_id`、`orchestrator_task_id`（V1.5 单聊为空，V2 群聊填入）。
+## 给后续 Agent 的推进规则
 
-V2 **不重做** 交互后端；只接：
+1. **按 Phase 顺序推进**：从「前置门禁」→ `V2.0` → … → `V2.5`；每个 Phase **验收通过后再进下一 Phase**，避免 Orchestrator、schema、群聊 UI、SSE 同时大改导致难定位。
+2. **文件所有权**（见根目录 `AGENTS.md`）：`lib/orchestrator/` 仅 Orchestrator；`lib/db/` + `app/api/` 归 DB/API；`components/` + `app/` 归 UI；`lib/adapters/` 归适配器；**禁止**在 Invoker 里重写一套 adapter 循环，须扩展 `lib/conversations/runs.ts`。
+3. **V1.5 后端不重做**：`lib/interactions/`、respond API、SSE `interaction_*` 直接复用；V2 只补群聊字段写入与 UI 挂载。
+4. **原型优先于 mock**：群聊运行态 UI 以 `docs/design/prototypes/v2/` 为准；**删除** `lib/mock/group-conversation.ts` 中内嵌 `tasks` 与消息流 task-board（与附录 A.2、原型红色虚线一致）。
+5. **单聊不退化**：每 Phase 结束跑单聊 smoke（发消息、SSE、stop 无 body、inline Approval/Choice、regenerate）。
+6. **卡住时**：非主线问题写入 `docs/state/TOFIX.md`，不要大范围重构。
 
-- 群聊 Approval UI（右栏聚合，见 `prototypes/v2/approval-ui.html` 群聊 Tab）。
-- Orchestrator task 进入 `awaiting_interaction` 时 pause，用户 resolve 后 Invoker 继续。
+**推荐并行**：`V2.1`（Provider）与 `V2.2`（群聊 schema/roster API）可由不同 Agent 并行；**`V2.3` 必须等 V2.1 + V2.2 都验收**。
 
-## 1. 阶段目标
+---
 
-V2 的目标是把 V1 已完成的群聊静态 UI 接成真实可运行链路：用户在一个群聊中 @ 多个 Agent，Orchestrator 负责组织协作，子 Agent 作为群聊成员直接在消息流中回复自己的产出，最后由 Orchestrator 汇总结果。
+## 一、总体目标
 
-V2 不追求“所有 Agent 每轮都出场”。群聊必须先由两个或以上 Agent 初始化；初始化后，Orchestrator 可以根据当前回合的实际需要只派其中一个已入群 Agent 执行，也可以组织多个 Agent 协作。
+V2 把 V1 群聊静态 UI（`lib/mock/group-conversation.ts`）接成真实链路：用户在一个群聊中 @ 多个 Agent 初始化 roster，Orchestrator 组织协作，子 Agent 在消息流中各自回复，Orchestrator 最后汇总。
 
-## 2. 产品边界
+- V2 **不追求**「每轮所有 Agent 都出场」。
+- 群聊须先由 **两个或以上** Agent 实例初始化；之后 Orchestrator 可只派一个已入群 Agent，也可多 Agent 协作。
+- **Orchestrator 不是可 @ 的 Agent**：创建群聊后由系统自动加入控制平面；Composer **不能** `@orchestrator`（与 `ConversationSetup`「Orchestrator 自动加入」一致）。
 
-### 2.1 V2 必做
+---
 
-- 固定成员群聊：群聊初始化时确定参与 Agent。
-- 同基础 Agent 多运行时：如 `claude1`、`claude2` 同时存在于一个群聊。
-- 子 Agent 在群聊消息流中直接回复结果，显示各自头像、名称、状态和产物。
-- Orchestrator 自动生成计划、分派任务、维护任务状态、触发必要的 review / revise、最终汇总。
-- Orchestrator 在信息不足时向用户追问细节，直到认为可执行再调度子 Agent；用户未指定 Agent 分工时由 Orchestrator 负责分配。
-- Orchestrator 支持在已初始化群聊内只调用一个已入群 Agent，并向用户解释原因。
-- Orchestrator 上下文包含每个 Agent 的运行时能力、可用性和可探测到的模型信息。
-- Provider 支撑 Orchestrator Planner 调用 LLM，优先使用 `openai_compatible` Provider。
-- 群聊工作区选择与单聊一致：发消息前须选定 `workspace_path`，子 Agent 共用该会话工作区。
-- 群聊右栏展示真实多 Agent 状态、任务分派和产物汇总（**不在消息流内嵌任务进度卡片**）。
-- 每个正在执行的子 Agent 头像旁提供停止按钮；停止后可由用户 `@` 已入群 Agent 手动分配后续任务。
+## 二、V2 原型对照（实现前必读）
 
-### 2.2 V2 暂不做
+| 原型文件 | 用途 | 主要落点 | 对应 Phase |
+| --- | --- | --- | --- |
+| `prototypes/v2/group-interaction-ui-recommendation.html` | 群聊运行态总览：气泡下 inline 交互、右栏两区块、**不要**工作区/产出/右栏审批按钮 | `MessageBubble.tsx`、`GroupContext`、`ContextPanel.tsx` | **V2.4** |
+| `prototypes/v2/approval-ui.html` | Approval 单聊 Tab① / 群聊 Tab②：卡片在 Agent 气泡下，右栏仅状态 | `InteractionApprovalCard.tsx`（复用） | **V2.4**（组件 V1.5 已有） |
+| `prototypes/v2/choice-ui.html` | Choice inline 单选 + 可选自定义；右栏仅 `awaiting_choice` | `InteractionChoiceCard.tsx`（复用） | **V2.4** |
+| `prototypes/v1/group-chat-new.html`、`group-chat.html` | 群聊三栏布局、Orchestrator 气泡、多 Agent 头像 | `AppShell`、群聊路由 | V1 已 React 化；V2.4 接真数据 |
+
+**群聊右栏铁律**（来自 `group-interaction-ui-recommendation.html` 表格与红色虚线）：
+
+- **消息流**：Approval / Choice 的**操作**只在对应 Agent 气泡下 inline。
+- **右栏 · 参与上下文**：各 alias + Orchestrator 状态文案（含 `awaiting_approval` / `awaiting_choice` 摘要），**只读**。
+- **右栏 · 任务分派**：`orchestrator_tasks` 列表（assignee、状态），SSE `task_status` 更新，**只读**。
+- **右栏不要**：工作区区块、产出文件、进度 todo、Approval/Choice 按钮列表（属 `SingleContext`，非 `GroupContext`）。
+
+---
+
+## 三、目录结构（V2 增量）
+
+在 V1 骨架上新增/扩展：
+
+```text
+lib/
+├── orchestrator/              # V2.3 新建（当前不存在）
+│   ├── service.ts
+│   ├── context.ts
+│   ├── planner.ts
+│   ├── validator.ts
+│   ├── scheduler.ts
+│   ├── invoker.ts
+│   ├── evaluator.ts
+│   ├── aggregator.ts
+│   ├── runtime-inspection.ts
+│   └── types.ts
+├── conversations/
+│   ├── runs.ts                  # 扩展：conversationAgentId、按 Agent stop
+│   └── stream-bus.ts            # 扩展：task_*、orchestrator_* 事件
+├── agents/
+│   └── mention.ts               # 扩展：slug 初始化 vs alias 后续 @
+├── interactions/                # V1.5 已有，V2 只写 conversationAgentId / orchestratorTaskId
+└── db/schema.ts                 # V2.0 定稿 migration，V2.2 执行
+
+app/api/
+├── providers/                   # V2.1
+├── orchestrator/settings/       # V2.1
+├── conversations/[id]/stop/     # V2.2 群聊 body
+└── agents/runtime/              # V2.1
+
+components/
+├── chat/                        # V2.4 群聊气泡、stop、inline 交互挂载
+└── context/ContextPanel.tsx     # V2.4 GroupContext 真数据
+```
+
+---
+
+## 四、阶段拆分（Agent 主入口）
+
+> 本计划**不要一次性做完**。每 Phase 含：**目标 → 前置依赖 → 工作清单 → 原型/文件 → 验收**。详细领域规则见文末 **附录 A–J**（原 §3–§12）。
+
+### Phase V2.0：文档、契约与 schema 设计
+
+**目标**：评审能讲清 V1.5 复用点、破坏性 migration、群聊消息流**无 task 卡片**；不写 Orchestrator 业务代码。
+
+**前置依赖**：§0 门禁（V1.5 单聊 E2E）已人工确认。
+
+**工作**：
+
+- 更新 `docs/design/API_CONTRACT.md`：**先补 V1.5 交互端点**，再写 group / Orchestrator / Provider / SSE 增量。
+- 更新 `docs/design/TECH_DESIGN.md` §7.2–7.4（interaction、`agent_external_sessions`、adapter 现状）。
+- 定稿附录 H.3 migration（`conversation_agents`：删 `(conversation_id, agent_id)` 唯一、加 `alias` 等）。
+- 定稿附录 B.1 alias 规则与 `mention.ts` 扩展设计（slug 初始化 vs alias 后续 @）。
+- 在 `REVIEW_CHECKLIST.md` 草拟 V2 段（可先占位）。
+
+**涉及文件**：`docs/design/*`（无 `lib/orchestrator/` 实现）。
+
+**验收**：
+
+- [ ] 评审能说明：V1.5 哪些 API/SSE/表直接复用。
+- [ ] migration 脚本步骤与回滚策略书面定稿。
+- [ ] 文档明确：任务进度**只在右栏**，消息流禁止内嵌 task-board。
+
+---
+
+### Phase V2.1：Provider 与 runtime inspection
+
+**目标**：Planner 有可配置的 `openai_compatible` Provider；设置页不再用 Provider mock；runtime 可探测（unknown 不硬猜模型）。
+
+**前置依赖**：V2.0 契约中 Provider / `orchestrator_settings` 字段已定稿。
+
+**工作**：
+
+- 新增表 `providers`、`orchestrator_settings`（见附录 G）。
+- 实现 `GET|POST|PATCH|DELETE /api/providers`、`POST .../test`。
+- 实现 `GET|PATCH /api/orchestrator/settings`。
+- 各 adapter 可选 `inspectRuntime?()`；`GET /api/agents/runtime`。
+- 设置页：`lib/mock/providers.ts` → 真实 API（`SettingsModal`）。
+
+**涉及文件**：`lib/db/schema.ts`、`app/api/providers/`、`app/api/orchestrator/`、`lib/adapters/*.ts`、`components/settings/`。
+
+**验收**：
+
+- [ ] 可保存并测试 `openai_compatible` Provider。
+- [ ] Planner smoke：HTTP 调 LLM 成功一次（脚本或临时 route 均可）。
+- [ ] `modelName` unknown 时 UI/Planner 行为符合附录 H（不按模型名瞎调度）。
+- [ ] 单聊功能不退化。
+
+---
+
+### Phase V2.2：群聊后端基础（roster、schema、stop）
+
+**目标**：群聊能建会话、首条消息初始化 roster（含同 slug 多实例）、校验 mention/工作区；按 Agent 粒度 stop；**尚未**要求完整 Orchestrator 调度闭环。
+
+**前置依赖**：V2.0 migration 定稿；建议 V2.1 已完成（V2.3 强依赖 Provider，但本 Phase 可不调 Planner）。
+
+**工作**：
+
+- 执行附录 H.3 migration：`conversation_agents`、`messages`、`agent_runs` 扩展字段。
+- 放开 `POST /api/conversations { mode: "group" }`；`GET /api/conversations` 含 group。
+- 首条消息：≥2 个有效 Agent mention → 生成 alias（`slug`、`slug-2`…）+ 写入 roster；Orchestrator 系统消息占位可先 stub。
+- `POST /api/messages`：群聊校验工作区、`@` 规则；中途 @ 未入群 slug → 400 + 明确文案。
+- `POST /api/conversations/:id/stop`：群聊 body `{ conversationAgentId }`；扩展 `runs.ts` 索引；SSE `task_status` cancelled（schema 可先写 task 表占位或 mock 事件，与 V2.3 对齐）。
+- **本 Phase 可不实现**完整 `OrchestratorService` 闭环；群聊 send 可返回 501/明确「调度未就绪」或仅落库用户消息 + roster，避免与 V2.3 重复造调度器。
+
+**涉及文件**：`lib/db/`、`lib/agents/mention.ts`、`lib/conversations/`、`app/api/conversations/`、`app/api/messages/`。
+
+**验收**：
+
+- [ ] 未选工作区不可发首条/后续消息。
+- [ ] `@claude-code @claude-code` → `claude-code` + `claude-code-2` 两行 roster。
+- [ ] 少于 2 个有效 mention → 400。
+- [ ] 初始化后 @ 新 slug →「请新建群聊」类错误。
+- [ ] stop 只影响指定 `conversationAgentId` 的 run（可用 fake/stub run 测）。
+- [ ] 单聊 `stop` 仍无 body，行为不变。
+
+---
+
+### Phase V2.3：Orchestrator P0（调度闭环）
+
+**目标**：群聊 `POST /api/messages` 走 Orchestrator：澄清 → 规划 → 分派 → 子 Agent 流式 → 汇总；task 与 `awaiting_interaction` 联动；子 Agent 消息带身份字段。
+
+**前置依赖**：**V2.1 + V2.2 均验收**。
+
+**工作**：
+
+- 新建 `lib/orchestrator/*`（`service` → `plan` → `validate` → `dispatch` → `collect` → `evaluate` → `summarize`）。
+- **Invoker** 薄封装：扩展 `startAgentRun({ conversationAgentId, orchestratorTaskId, taskPrompt })` + 已有 `drainAgentRun()`。
+- Planner：`phase=clarify|execute` JSON；`single_agent` 与多 Agent 模式；clarify 不创建 task、不调 Invoker。
+- Validator / Scheduler：task 状态含 `awaiting_interaction`；与 `agent_runs`、V1.5 interaction 同步。
+- 子 Agent assistant 消息：`authorConversationAgentId`；interaction 写入 `conversationAgentId`、`orchestratorTaskId`。
+- Orchestrator 消息 `role=orchestrator`；新增表 `orchestrator_runs`、`orchestrator_tasks`。
+- SSE：`task_created`、`task_status`、`task_result`、`orchestrator_summary`（澄清可用 orchestrator 消息 + `awaiting_user`，不必单独事件）。
+
+**涉及文件**：`lib/orchestrator/`、`lib/conversations/runs.ts`、`lib/conversations/stream-bus.ts`、`app/api/messages/`。
+
+**验收**：
+
+- [ ] Demo 步骤 1–7（§七）主路径可跑：澄清 → 多 Agent 流式 → 汇总。
+- [ ] `single_agent` follow-up 可只派一个 Agent。
+- [ ] 子 Agent 触发 Approval 时 task `awaiting_interaction` → respond 后 resume **同一 run**。
+- [ ] Hermes（`supportsApproval: none`）不被派为 implement_review 主写 Agent。
+- [ ] Orchestrator **不**代述子 Agent 全文（子 Agent 独立气泡）。
+
+---
+
+### Phase V2.4：前端真实联动
+
+**目标**：群聊页面接 API/SSE；UI 对齐 V2 原型；去掉 group mock 与 task-board；Composer alias 规则生效。
+
+**前置依赖**：V2.3 后端闭环可联调。
+
+**工作**：
+
+- 群聊消息流：Orchestrator / 子 Agent / 用户气泡；`authorConversationAgentId` 展示 alias、头像、平台、状态。
+- 子 Agent running：头像旁 stop → `POST .../stop` + `conversationAgentId`。
+- 复用 `InteractionApprovalCard` / `InteractionChoiceCard`：按 `messageId` + `conversationAgentId` 挂到**对应气泡下**（对照 `approval-ui.html` 群聊 Tab、`group-interaction-ui-recommendation.html`）。
+- `ContextPanel` → `GroupContext`：仅「参与上下文」+「任务分派」；**移除** mock `groupMessages[].tasks` 与 `MessageBubble` task-board。
+- Composer：初始化 ≥2 slug mention；初始化后仅 @ 已入群 **alias**；`ConversationSetup` 文案改为 V2 能力。
+- 工作区：与单聊相同 pill；未选禁用发送。
+- 设置页 Provider/Orchestrator：若 V2.1 未做完 UI，本 Phase 补齐。
+
+**涉及文件**：`components/chat/`、`components/context/`、`app/c/[conversationId]/`、`lib/mock/group-conversation.ts`（退役消息 mock）。
+
+**验收**：
+
+- [ ] §七 Demo 脚本 1–10 可在浏览器完成。
+- [ ] 刷新后 pending interaction 可 respond；消息流无 task 卡片。
+- [ ] Approval/Choice **均在气泡下**；右栏**无**审批按钮/选项列表。
+- [ ] 右栏有任务分派列表且随 SSE 更新。
+- [ ] 单聊不退化（§八清单）。
+
+---
+
+### Phase V2.5：QA 与收口
+
+**目标**：可演示、可交接；文档与检查清单同步。
+
+**前置依赖**：V2.4 验收通过。
+
+**工作**：
+
+- `npm run typecheck` / `npm run build`。
+- 单聊全链路 + interaction 回归。
+- 群聊主路径人工验证（§七）。
+- `REVIEW_CHECKLIST.md` 增 V2 段；问题入 `docs/state/TOFIX.md`。
+
+**验收**：
+
+- [ ] §八总验收标准全部勾选。
+- [ ] `roadmap.md` / 本文件顶部基线日期可更新为收口日。
+
+---
+
+## 五、V2 Demo 脚本（端到端）
+
+1. 新建群聊并选择工作区。
+2. `@claude-code @codex 帮我把登录页做了`（故意模糊）。
+3. Orchestrator 澄清，不调用子 Agent。
+4. 用户补充：邮箱+密码、对接 `/api/auth`、MVP。
+5. Orchestrator 计划并分工。
+6. Claude Code / Codex 各自流式回复。
+7. Orchestrator 汇总。
+8. 简单 follow-up → `single_agent` 只派一个 Agent。
+9. stop 后 `@claude-code`（alias）续派。
+10. 右栏：参与上下文 + 任务分派（对照 `group-interaction-ui-recommendation.html`）。
+
+---
+
+## 六、总验收标准
+
+- 群聊子 Agent 直接回复，Orchestrator 不代述。
+- Orchestrator 能解释 single vs 多 Agent 分工。
+- 模糊需求先 clarify；未指定分工时 Orchestrator 在 roster 内分配。
+- 同基础 Agent 多实例（alias `-2`）可区分。
+- Orchestrator 不写代码、不跑 shell。
+- Provider 支撑 Planner；Planner 与内置 CLI Agent 鉴权分离。
+- Runtime unknown 时不硬猜模型。
+- group 刷新后历史、task、身份可恢复。
+- 工作区规则与单聊一致。
+- **任务进度仅在右栏**；消息流无内嵌 task 卡片。
+- 按 Agent stop：`message_status` / `run_status` / `task_status`；可 `@` 续派。
+- **单聊不退化**；**V1.5 交互 API/SSE 群聊复用**，无 single-only hardcode。
+
+---
+
+## 七、实现映射（当前仓库）
+
+| 模块 | 路径 | V2 动作 |
+| --- | --- | --- |
+| 交互 | `lib/interactions/` | 复用 |
+| Run / SSE | `lib/conversations/runs.ts`, `stream-bus.ts` | 扩展 |
+| Mention | `lib/agents/mention.ts` | 扩展 alias 模式 |
+| 群聊 mock | `lib/mock/group-conversation.ts` | V2.4 退役消息 mock |
+| Orchestrator | `lib/orchestrator/` | V2.3 新建 |
+| Provider mock | `lib/mock/providers.ts` | V2.1 退役 |
+| API 契约 | `docs/design/API_CONTRACT.md` | V2.0 同步 |
+| 群聊 UI 原型 | `docs/design/prototypes/v2/*.html` | V2.4 对齐 |
+
+---
+
+## 0. 前置：V1.5 交互桥接（门禁）
+
+完整规格见 `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md`。启动 V2 编码前，按 `docs/design/REVIEW_CHECKLIST.md` §V1.5 勾选。
+
+### 0.1 代码中已具备（V2 直接复用）
+
+
+| 能力                                                                                         | 现状位置                                                                      |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `agent_interactions` 表；可空 `conversation_agent_id`、`orchestrator_task_id`                   | `lib/db/schema.ts`                                                        |
+| `agent_runs.status` 含 `awaiting_interaction`                                               | `lib/db/schema.ts`                                                        |
+| `AgentEvent.interaction_required`；`AdapterRunParams.requestInteraction`                    | `lib/adapters/types.ts`                                                   |
+| run 挂起 / 唤醒                                                                                | `lib/interactions/run-bridge.ts`、`lib/conversations/runs.ts`              |
+| 交互 CRUD + respond（含不可恢复 waiter → 409）                                                      | `lib/interactions/service.ts`                                             |
+| `GET /api/conversations/:id/interactions?status=pending`                                   | `app/api/conversations/[conversationId]/interactions/route.ts`            |
+| `POST /api/interactions/:interactionId/respond`                                            | `app/api/interactions/[interactionId]/respond/route.ts`                   |
+| SSE `interaction_requested` / `interaction_resolved`；`run_status` 含 `awaiting_interaction` | `lib/conversations/stream-bus.ts`                                         |
+| 单聊 inline Approval / Choice 卡片                                                             | `components/chat/InteractionApprovalCard.tsx`、`InteractionChoiceCard.tsx` |
+| Claude / Codex / OpenCode `capabilities.supportsApproval/Choice = native`                  | 各 adapter；Hermes 为 `none`                                                 |
+
+
+### 0.2 V2 只新增（不重做 V1.5 后端）
+
+- 群聊 **Approval / Choice UI**：与单聊相同，均在 **对应 Agent 气泡下 inline**（复用 `InteractionApprovalCard` / `InteractionChoiceCard`）；右栏 **不** 重复交互卡片，只显示 `awaiting_approval` / `awaiting_choice` 状态摘要（见 `prototypes/v2/group-interaction-ui-recommendation.html`）。
+- Orchestrator task / sub-agent run 进入 `awaiting_interaction` 时 pause；用户 resolve 后 **同一 `agent_run` resume**（与单聊一致）。
+- Invoker 调用 adapter 时写入 `conversationAgentId`、`orchestratorTaskId` 到 interaction 上下文；前端按 `conversationAgentId` / `messageId` 把卡片挂到正确 Agent 气泡。
+
+### 0.3 启动 V2 前仍须人工确认
+
+- 单聊 Approval / Choice E2E（至少一个真实 adapter；fake 不能作为唯一依据）。
+- 刷新后 pending interaction 可 respond；不可恢复时 409 + 明确 error 态（见 `docs/state/TOFIX.md` 已修项）。
+- 单聊发消息 / SSE / stop / regenerate / 产物 / 工作区不退化。
+- `docs/design/API_CONTRACT.md` 补录 V1.5 交互端点（V2.0 文档阶段一并完成）。
+
+---
+
+> **说明**：§一–§七 为 Agent 主入口；以下 §0 起为**领域规格与附录**（实现时按需查阅，不必每次重读全文）。
+
+## 附录 A. 产品边界
+
+### A.1 V2 必做
+
+- 固定成员群聊：首条有效消息初始化 roster。  
+- 同基础 Agent 多实例：如两个 `@claude-code` → `claude-code` 与 `claude-code-2`（见附录 B.1 alias 规则）。
+- 子 Agent 在消息流直接回复，显示 alias、头像、平台、状态、产物。
+- Orchestrator：计划、分派、任务状态、review/revise（有限）、汇总。
+- 需求模糊时 Orchestrator 先澄清；用户未指定分工时由 Orchestrator 在 roster 内分配。
+- 已初始化群聊内可 **single_agent** 只派一个 Agent 并说明原因。
+- Orchestrator 上下文含各成员 adapter 能力（`capabilities`）、health、可探测 runtime（V2.1 起）。
+- Provider 支撑 Planner LLM，优先 `openai_compatible`（见 `docs/design/TECH_DESIGN.md` §3）。
+- 群聊工作区与单聊一致；子 Agent 共用 `conversations.workspace_path`。
+- 群聊右栏仅 **参与上下文 + 任务分派**（对齐 `GroupContext`；无工作区/产出 section）。
+- 每个 running 子 Agent 可单独 stop；stop 后用户可 `@` 已入群 alias 手动续派。
+
+### A.2 V2 暂不做
 
 - 中途 @ 新 Agent 加入当前群聊。
 - 动态重规划无限循环。
 - Agent 之间直接互相调用。
-- 多 Agent 同轮并发写同一个代码库。
-- 复杂失败降级：自动换 Agent、复杂重试策略、跳过继续。
-- 代码冲突自动解决。
+- 多 Agent 同轮并发写同一代码库。
+- 复杂失败降级、代码冲突自动解决。
 - 自建 Agent、SkillRunner、`/agent-creator`、`/skill-creator`。
 - 多 workspace 隔离。
-- 消息流内嵌任务进度卡片（任务状态只在右栏展示，Orchestrator 计划仍以消息气泡呈现）。
+- 消息流内嵌 ta      sk 卡片（**须移除** 当前 mock 中 `groupMessages[].tasks` 与 `MessageBubble` 的 task-board 展示）。
 
-如果用户在初始化后 @ 未加入的 Agent，V2 返回明确提示：`V2 暂不支持中途邀请新 Agent，请新建群聊。`
+初始化后 @ 未入群 Agent/slug：返回 `V2 暂不支持中途邀请新 Agent，请新建群聊。`
 
-## 3. 群聊语义
+---
 
-### 3.1 初始化
+## 附录 B. 群聊语义
 
-群聊创建时不选择 Agent，只进入空群聊。第一条有效用户消息必须 @ 两个或以上 Agent alias，用于初始化群聊成员。若第一条消息少于两个有效 Agent mention，后端直接拒绝，不进入 Orchestrator Planner。
+### B.1 初始化与 @ mention
 
-示例：
+群聊创建时不预选 Agent。第一条有效用户消息须 @ **两个或以上 Agent 实例**（可以重复同一 slug，如 `@claude-code @claude-code @codex`）。少于两个有效 mention 时后端 400，不进入 Planner。
 
-```text
-@claude1 @claude2 @codex1 帮我分析 V2 Orchestrator 应该怎么设计
-```
+**与现有 mention 解析衔接**（`lib/agents/mention.ts`）：
 
-初始化后写入 `conversation_agents`，后续任务分配必须指向 `conversation_agent_id`，不能只指向底层 `agent_id`。
+1. **初始化阶段**：仍解析 **Agent slug**（`@claude-code`、`@codex` 等），复用 `parseAgentMentions`。
+2. **alias 生成**（写入 `conversation_agents.alias`，供后续 @ 与 UI 展示）：
+  - 按消息中出现顺序，每个 mention 占 roster 一行。
+  - 某 slug **首次**出现 → alias = 规范化 slug（如 `claude-code`）。
+  - 同 slug **再次出现** → alias = `{slug}-2`、`-3`…（如 `claude-code-2`）。
+  - `display_name` 默认取自 `agents.name`，可在 UI 显示为「Claude Code (2)」。
+3. **Orchestrator** 在首条消息处理完成后自动写入一条 system/orchestrator 身份消息（非用户 @）。
+4. **初始化后**：Composer 只允许 @ **已入群 alias**（不是任意新 slug）。解析器须区分「slug 初始化」与「alias 后续 @」两种模式。
 
-初始化后的后续消息可以 @ 一个已入群 Agent，也可以不 @。这时 Orchestrator 只在固定 roster 内选择执行者；它可以选择一个 Agent 执行，也可以选择多个 Agent 协作，但不能把未入群 Agent 加入当前会话。
-
-### 3.2 同类 Agent 多实例
-
-同一个基础 Agent 可以在一个群聊里有多个运行时实例：
-
-```text
-Agent: Claude Code
-ConversationAgent: claude1
-ConversationAgent: claude2
-```
-
-两个实例共享底层平台配置，但拥有独立的：
-
-- `conversation_agent_id`
-- alias
-- 展示名称
-- 消息身份
-- 任务状态
-- run 记录
-
-V2 不强制为同类实例分配不同 workspace。
-
-### 3.3 子 Agent 必须在消息流中回复
-
-Orchestrator 不能吞掉子 Agent 的结果后统一转述。正确消息流应该是：
+示例（与当前 Setup 文案一致）：
 
 ```text
-用户：
-@claude1 @claude2 帮我讨论这个方案
+@claude-code @codex 帮我分析 V2 Orchestrator 应该怎么设计
+→ roster: claude-code, codex
 
-Orchestrator：
-我会分两路处理：
-- claude1：分析技术架构
-- claude2：分析产品边界
-
-Claude 1：
-这里的核心架构风险是...
-
-Claude 2：
-从产品体验看...
-
-Orchestrator：
-综合两边结论，建议...
+@claude-code @claude-code 并行做 UI 和 API 审查
+→ roster: claude-code, claude-code-2
 ```
 
-Orchestrator 是主持人，不是代发言人。
+初始化后任务分配 **必须** 指向 `conversation_agent_id`，不能只指向底层 `agent_id`。
 
-### 3.4 工作区（参考单聊）
+后续消息可 @ 零个、一个或多个已入群 alias；Orchestrator 只在固定 roster 内选人，不能把未入群 Agent 加入会话。
 
-群聊 `workspace_path` 规则与 V1 单聊保持一致，不做额外分支：
+### B.2 同类 Agent 多实例
 
-- 新建群聊进入空白页后，用户须先选择工作区（Composer 工作区选择器 / `POST /api/workspace/select`），与单聊相同。
-- 未选定工作区时禁止发送首条消息（含初始化 `@` 消息）；前端提示与单聊一致。
-- 首条有效消息创建或绑定 `conversations.workspace_path`；后续子 Agent task 与附件路径校验均使用该目录。
-- 群聊内所有已入群 Agent **共用**同一会话工作区；V2 不为每个 `conversation_agent_id` 分配独立 workspace。
-- 工作区可在会话生命周期内通过 `PATCH /api/conversations/:id` 更新，规则同单聊。
+同一 `agents.id` 可对应多行 `conversation_agents`（V2 须 **移除** 现有 `(conversation_id, agent_id)` 唯一索引，改为 `(conversation_id, alias)` 唯一）。
 
-### 3.5 停止生成与用户接管
+每实例独立：`conversation_agent_id`、alias、展示名、消息身份、task 状态、`agent_runs`（含 `conversation_agent_id`）。共享底层 platform 配置与同一会话 `workspace_path`。
 
-停止语义 **对齐 V1 单聊 adapter run**，但粒度改为 **按子 Agent（`conversation_agent_id`）**：
+### B.3 子 Agent 必须在消息流中回复
 
-| 层级 | V2 行为 |
-| --- | --- |
-| 用户操作 | 正在流式回复的子 Agent 气泡/头像旁显示停止按钮；点击后只停止 **该 Agent 当前 running 的 adapter run** |
-| 后端 | 对该 task 关联的 `AbortController` 调用 `abort()`；adapter 收到 `signal` 后结束 |
-| 数据 | 对应 `agent_run` → `cancelled`；assistant 消息 → `cancelled`；`orchestrator_tasks` → `cancelled` |
-| Orchestrator run | **不**因单个 Agent 被 stop 而整体作废；同轮其余 running / pending task 继续，已完成 task 保留 |
-| 会话状态 | 当本轮所有 task 进入终态（`done` / `failed` / `cancelled`）后，`orchestrator_runs` 与 `conversations.status` 回到 `done` |
+Orchestrator 不得吞掉子 Agent 结果后统一代述。示意：
 
-**SSE 广播**（与单聊一致，并补充 task 维度）：
+```text
+用户：@claude-code @codex 帮我讨论这个方案
+
+Orchestrator：我会分两路：claude-code 看架构，codex 看实现边界
+
+Claude Code：架构风险是…
+
+Codex：从实现看…
+
+Orchestrator：综合结论…
+```
+
+### B.4 工作区（与单聊一致）
+
+- 未选 `workspace_path` 禁止发首条消息（含初始化 @）。
+- `POST /api/workspace/select` / `PATCH /api/conversations/:id` 规则同 V1。
+- 群聊内所有成员共用同一会话工作区。
+
+### B.5 停止生成与用户接管
+
+**现状（单聊，V1.5）**：`POST /api/conversations/:id/stop` 无 body；`stopConversationRun()` 找该会话最近一个 `running|pending|awaiting_interaction` 的 run 并 abort；会 `cancelPendingRunInteractions`。
+
+**V2 群聊扩展**（单聊保持无 body 行为不变）：
+
+
+| 层级               | V2 行为                                                                                         |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| 用户操作             | running 子 Agent 气泡/头像旁 stop；只停 **该 `conversation_agent_id` 当前 run**                           |
+| 后端               | 对该 task 的 `AbortController.abort()`；`cancelPendingRunInteractions` 若处于 `awaiting_interaction` |
+| 数据               | `agent_run` → `cancelled`；assistant 消息 → `cancelled`；`orchestrator_tasks` → `cancelled`       |
+| Orchestrator run | 单个 Agent stop **不**作废整轮；其余 task 继续                                                            |
+| 会话               | 本轮所有 task 终态后 `orchestrator_runs` 与 `conversations.status` → `done`                           |
+
+
+**SSE**（在 V1.5 已有事件上扩展）：
 
 ```text
 message_status  { messageId, status: "cancelled" }
-run_status      { runId, status: "cancelled" }
-task_status     { taskId, status: "cancelled" }
+run_status      { runId, status: "cancelled" }    // 已有
+task_status     { taskId, status: "cancelled" }   // V2 新增
+interaction_resolved ...                          // stop 时 pending 交互 cancelled
 ```
 
-右栏对应 Agent 行与 task 行同步更新为已取消。
+stop 后不自动 summary；用户可 `@` 已入群 alias 续派（Planner 优先 `single_agent`）。
 
-**用户 stop 后的手动接管**：
+V2 **不提供**「一键停整轮所有 Agent」；须分别 stop 或等待结束。
 
-- 当前 `orchestrator_run` 进入部分完成态；Orchestrator **不**自动重规划剩余 pending task。
-- 用户可在 Composer 中 `@某个已入群 alias` 并附带新指令，触发新一轮用户消息。
-- Planner 看到用户显式 `@` 某 Agent 时，优先进入 `single_agent` 模式，只给被 @ 的 Agent 分派一条 task，并在 Orchestrator 消息中简短说明「按你的指定继续交给 xxx」。
-- 未被 @ 的 Agent 在本轮不自动出场；用户也可不 @ 任何 Agent，由 Orchestrator 在 roster 内自行选择（与 §3.1 一致）。
+### B.6 需求澄清与任务分配
 
-V2 **不提供**「一键停止整轮 Orchestrator 下所有 Agent」的全局 stop；若需全部停下，用户对每个仍在 running 的 Agent 分别点停止，或等待其自然结束。
+（规则不变：模糊需求先 clarify 气泡、不 dispatch；最多连续澄清 2 轮；用户说「直接做」则带假设执行。）
 
-### 3.6 需求澄清与任务分配
+---
 
-用户发出需求后，Orchestrator **先判断信息是否足够**，再决定是否调度子 Agent：
+## 附录 C. Orchestrator 定位
 
-```text
-用户：@claude1 @claude2 帮我把登录页做了
+Orchestrator 是群聊 **控制平面**，不是 Claude Code / Codex 实例，不可被用户 @。
 
-Orchestrator：在开始前我需要确认几点：
-1. 登录页是邮箱+密码还是 OAuth？
-2. 是否需要对接现有 API，还是先做静态 UI？
-3. 有无设计稿或参考页面？
+负责：澄清、规划、校验、调度、任务状态、收集输出、有限 revise、汇总。  
+不负责：写代码、改文件、跑 shell、代述子 Agent 结果、替用户做产品终局决策。
 
-用户：邮箱+密码，对接现有 /api/auth，先做 MVP
+---
 
-Orchestrator：收到。我会这样分工：
-- claude1：梳理 API 与表单校验
-- claude2：实现登录页组件
-…
-```
+## 附录 D. Orchestrator 模块设计
 
-**澄清规则**：
-
-| 情况 | Orchestrator 行为 |
-| --- | --- |
-| 需求模糊、缺关键约束（范围、验收标准、技术边界等） | 发 **澄清消息**（普通 Orchestrator 气泡），列出具体问题；**不**创建 task、**不**调用子 Agent |
-| 用户已 @ 某 Agent 且指令足够明确 | 可跳过或只做 1 条极短确认，优先进入执行 |
-| 用户未 @ 任何 Agent，或 @ 了但未说明谁做什么 | Orchestrator **负责**在 roster 内选 Agent、定协作模式、写 `assignment_reason` |
-| 用户回复澄清问题 | 视为同一会话目标的续聊；重新评估是否足够，足够则进入 plan → dispatch |
-| 用户明确说「直接做 / 不用问了」 | 视为信息足够，Orchestrator 按现有信息执行并在计划中注明假设 |
-
-**V2 限制**：
-
-- 同一用户目标下，Orchestrator **最多连续澄清 2 轮**（不含用户回答）；仍不足则带明确假设进入执行，并在计划消息中列出假设。
-- 澄清阶段 **不**进入 `revise` 循环；只有已 dispatch 后的 review 才走 §5.1 的 revise 上限。
-
-**与初始化的关系**：
-
-- 首条 `@` 初始化消息若同时包含任务描述，Orchestrator 在 roster 写入后同样先走澄清判断；信息不足时只追问，不 dispatch。
-- 初始化要求（至少 2 个有效 `@`）不变；澄清不改变 roster。
-
-## 4. Orchestrator 定位
-
-Orchestrator 是群聊协作的控制平面，不是一个可聊天 Agent，也不是 Claude Code / Codex / OpenCode 的某个实例。
-
-它负责：
-
-- 判断用户当前描述是否足以安全执行（范围、约束、验收、分工是否清晰）。
-- 信息不足时向用户追问，直到认为足够或达到 V2 澄清轮次上限。
-- 用户未指定 Agent 分工时，在 roster 内选择执行者与协作模式。
-- 判断本轮请求是否需要多 Agent。
-- 选择协作模式。
-- 生成结构化计划。
-- 校验计划是否合法、是否越权、是否过度分派。
-- 调度子 Agent 执行任务。
-- 维护任务状态。
-- 收集子 Agent 输出。
-- 做结构检查、一致性检查和验收检查。
-- 必要时安排一次返工。
-- 写入最终汇总消息。
-
-它不负责：
-
-- 直接写代码。
-- 直接改文件。
-- 直接执行 shell 命令。
-- 代替子 Agent 输出任务结果。
-- 把自己暴露为可选聊天对象。
-- 代替用户做产品/业务终局决策（只能追问缺失信息并给出可执行假设，不能替用户定需求）。
-
-## 5. Orchestrator 模块设计
-
-新增目录：
+新增目录（当前 **不存在**，V2.3 实现）：
 
 ```text
 lib/orchestrator/
@@ -232,7 +470,7 @@ lib/orchestrator/
 ├── planner.ts
 ├── validator.ts
 ├── scheduler.ts
-├── invoker.ts
+├── invoker.ts          # 薄封装，见 §5.5
 ├── evaluator.ts
 ├── aggregator.ts
 ├── runtime-inspection.ts
@@ -241,430 +479,242 @@ lib/orchestrator/
 
 ### 5.1 OrchestratorService
 
-总入口，负责串起完整状态机：
-
 ```text
 user_message
   -> build_context
-  -> plan                    // 输出 clarify | execute
-  -> clarify?                // 信息不足：Orchestrator 追问，结束本轮，等待用户下一条消息
-  -> validate                // 信息足够：校验计划
+  -> plan                    // clarify | execute
+  -> clarify?                // 只发 Orchestrator 消息，结束本轮
+  -> validate
   -> dispatch
   -> collect
   -> evaluate
-  -> revise?
+  -> revise?                 // 最多 1 次
   -> summarize
 ```
 
-澄清与执行 **互斥**：`clarify` 阶段不创建 `orchestrator_tasks`、不调用 Invoker。
-
-V2 限制最多两轮执行 revise：
-
-```text
-plan -> execute -> review/verify -> optional revise -> summary
-```
-
-同一用户目标下澄清最多 2 轮（见 §3.6）。
+`clarify` 阶段不创建 `orchestrator_tasks`、不调用 Invoker。
 
 ### 5.2 Planner
 
-Planner 是 Orchestrator 内部模块，不是独立 Agent。它调用 Provider LLM，将用户意图转为 **澄清判断** 或 **结构化协作计划**。
-
-Planner 输出两种 phase（JSON）：
-
-```json
-{
-  "phase": "clarify",
-  "analysis": "用户想实现登录页，但未说明鉴权方式与是否对接 API",
-  "questions": ["登录方式？", "是否对接现有 API？", "有无设计参考？"],
-  "missing_info": ["auth_method", "api_scope"]
-}
-```
-
-```json
-{
-  "phase": "execute",
-  "mode": "parallel_investigation",
-  "analysis": "...",
-  "collaboration_reason": "...",
-  "tasks": [ "..."]
-}
-```
-
-`phase=clarify` 时 Validator 只校验：问题非空、未越权指派 Agent、未偷偷创建 task。  
-`phase=execute` 时走完整 Validator（§5.3）。
-
-Planner 必须支持 `single_agent` 模式。提示词中写入硬规则：
-
-```text
-先判断信息是否足够再决定是否 dispatch。缺范围、验收标准、技术约束、或分工不清时，输出 phase=clarify 和具体问题，不要猜测后立刻派 Agent。
-用户未 @ 任何 Agent，或未说明谁做什么时，由你在 roster 内分配；必须在 assignment_reason 中说明理由。
-用户已 @ 某 Agent 且任务足够明确时，可 phase=execute；必要时最多 1 条简短确认，不要冗长盘问。
-用户明确表示「直接做 / 不用问」时，phase=execute，在 analysis 中列出你的假设。
-当前群聊已经由两个或以上 Agent 初始化；你只能从当前 roster 中选择执行者。
-你不需要每一轮都调用多个 Agent。
-如果用户请求简单、范围单一、或后续消息明确 @ 某个已入群 Agent，应选择 single_agent 模式。
-只有在任务需要多视角分析、并行调查、实现+审查、方案比较、或明确要求多个 Agent 协作时，才选择多个 Agent。
-选择 single_agent 时，必须给出简短原因，并只创建一个 task。
-选择多 Agent 时，必须说明每个 Agent 的分工理由。
-不要为了让群聊显得热闹而分派无必要任务。
-```
+内部模块，经 Provider HTTP 调 LLM（**不走** Claude Agent SDK）。输出 `phase=clarify|execute` JSON（结构见原文 §5.2 示例）。须支持 `single_agent` 与多 Agent 模式；硬规则不变。
 
 ### 5.3 Validator
 
-纯代码校验，不相信 LLM 输出。Validator 不判断任务语义是否“真的必要”，只校验结构、权限和可枚举的产品策略。检查：
-
-- assignee 是否属于当前群聊成员。
-- task 依赖是否存在。
-- 是否有循环依赖。
-- `single_agent` 模式是否只包含一个 task。
-- reviewer / verifier 是否申请了写权限。
-- 写任务是否被多个 Agent 并行执行。
-- 是否任务数量过多。
-- 计划是否违反初始化后的固定 roster 约束。
-- 多 Agent 分配是否缺少 `collaboration_reason` 和每个 task 的 `assignment_reason`。
+纯代码校验：assignee ∈ roster、依赖无环、single_agent 仅一 task、写任务不并行、roster 固定等。
 
 ### 5.4 Scheduler
 
-执行轮次和依赖。任务状态：
+任务状态（与 `agent_runs` 对齐，含交互态）：
 
 ```text
-pending -> running -> done / failed / cancelled
+pending -> running -> awaiting_interaction -> running -> done / error / cancelled
 ```
 
-无依赖任务可并行，但写操作保守串行。
+- sub-agent run 进入 `awaiting_interaction` 时，对应 `orchestrator_tasks.status` 同步为 `awaiting_interaction`。
+- 用户 respond 后 task 回到 `running`，直至 `done|error|cancelled`。
+- 读/analyze/review 可并行；edit/write/run_command 默认串行。
 
-V2 默认规则：
+### 5.5 Invoker（复用现有 Run 管线）
+
+**不要**在 Invoker 内重写一套 adapter 循环。应 **扩展** `lib/conversations/runs.ts`：
 
 ```text
-read / analyze / summarize / review -> 可并行
-edit / write / run_command -> 默认串行
+Orchestrator task
+  -> startAgentRun({ conversationId, agent, workspacePath, conversationAgentId, orchestratorTaskId, taskPrompt })
+  -> drainAgentRun()   // 已有：text_delta、artifact、interaction_required、abort
+  -> 子 Agent assistant 消息写入 messages（带 authorConversationAgentId）
 ```
 
-### 5.5 Invoker
+要点：
 
-把 Orchestrator task 转成具体 adapter 调用：
+- 每个 task 一条 `agent_runs` 行，**新增** `conversation_agent_id`（见 §9）。
+- `requestInteraction` 回调写入 `conversationAgentId`、`orchestratorTaskId`（V1.5 字段已预留）。
+- 多轮 CLI 会话复用 `agent_external_sessions`（已有表）。
+- assignee 的 `agent_id` + platform 决定 `getAdapter(platform).run(...)`。
 
-```text
-claude1 -> ClaudeCodeAdapter.run(...)
-claude2 -> ClaudeCodeAdapter.run(...)
-codex1  -> CodexAdapter.run(...)
-```
+### 5.6 Evaluator / 5.8 Aggregator
 
-调用时构造面向该子 Agent 的 task prompt，并要求它作为群聊成员直接回复。
-
-### 5.6 Evaluator
-
-Evaluator 不是自己写答案，而是根据事实判断是否进入下一步：
-
-- task 是否完成。
-- adapter 是否返回错误。
-- reviewer 是否指出 blocking 问题。
-- 验证命令是否通过。
-- 用户目标是否仍有明显缺口。
-
-V2 简化策略：
-
-- 子任务失败：停止依赖任务，Orchestrator 说明失败点。
-- reviewer 指出 blocking：允许一次 revise。
-- 其他情况：进入 summary。
+（策略不变：子 task 失败停依赖；blocking review 允许一次 revise；汇总不替代子 Agent 原文。）
 
 ### 5.7 Stop（按 Agent 粒度）
 
-复用 V1 `lib/conversations/runs.ts` 的 `AbortController` 模式，Orchestrator 在 `Invoker` 启动每个 task 时注册 `{ taskId, runId, conversationAgentId, controller }`。
-
-- `POST /api/conversations/:id/stop` 请求体：`{ conversationAgentId: string }`（群聊必填；单聊仍可无 body，行为与 V1 一致）。
-- 查找该 Agent 在当前 `orchestrator_run` 中 `status=running` 的 task 与 adapter run，执行 abort。
-- 通过 `stream-bus` 推送 §3.5 所列 SSE 事件；Scheduler 将该 task 的依赖后继标为 `cancelled` 或 `skipped`（V2 默认 **cancelled**，不自动改派给其他 Agent）。
-- stop 后 **不**触发 Evaluator 的 revise / summary；等用户下一条消息或同轮其余 task 全部结束后，再决定是否 summary。
+在现有 `activeRuns: Map<runId, AbortController>` 上增加 **按 conversationAgentId 索引**（或 taskId → runId）。群聊 `POST .../stop` body：`{ conversationAgentId: string }`。
 
 ### 5.8 Aggregator
 
-汇总最终结果，但不替代子 Agent 的原始回复。最终消息包含：
+（不变。）
 
-- 参与 Agent。
-- 分工过程。
-- 每个任务结果。
-- 验证结果。
-- 剩余风险。
-- 下一步建议。
+---
 
-## 6. 协作模式
+## 附录 E. 协作模式
 
-V2 内置四种协作模式。
+`single_agent` | `parallel_investigation` | `compare` | `implement_review` | `pipeline` — 语义不变。
 
-### 6.1 single_agent
+**implement_review 注意**：assignee 须 `capabilities.supportsApproval !== "none"`；Hermes（`noInteractionCapabilities`）不宜作为主写 Agent。
 
-适用：
+---
 
-- 简单问答。
-- 单点解释。
-- 初始化后用户明确 @ 一个已入群 Agent。
-- 不需要交叉验证的明确任务。
+## 附录 F. 上下文管理
 
-输出一条任务，只分配给一个已入群 Agent。Orchestrator 需要写一条短消息解释为什么本轮不启用多 Agent。
+### 7.1 事实源（当前 + V2 增量）
 
-### 6.2 parallel_investigation
 
-适用：
+| 表                                                                               | 阶段             |
+| ------------------------------------------------------------------------------- | -------------- |
+| `conversations`, `messages`, `message_attachments`                              | V1             |
+| `agents`, `conversation_agents`, `agent_runs`, `artifacts`                      | V1（V2 扩展字段/语义） |
+| `agent_interactions`, `agent_external_sessions`                                 | V1.5           |
+| `providers`, `orchestrator_settings`, `orchestrator_runs`, `orchestrator_tasks` | V2 新增          |
 
-- 读项目。
-- 查架构。
-- 多模块调查。
-- 需求和代码现状对齐。
 
-示例分工：
+不使用单独的 `task_runs` 表；task 与 `agent_runs` 通过 `orchestrator_tasks.result_message_id` / run 外键关联即可。
 
-- `claude1` 看 UI。
-- `claude2` 看 API / DB。
-- `codex1` 看 adapter / runtime。
+### 7.2–7.5 Planner / 子 Agent / Evaluator 上下文、摘要策略
 
-### 6.3 compare
+（不变；Planner roster 须含 `AdapterCapabilities` 与 runtime inspection 结果。）
 
-适用：
+---
 
-- 架构方案比较。
-- 产品取舍。
-- 技术路线争议。
+## 附录 G. Agent Runtime 与模型探测
 
-多个 Agent 独立给方案或反对意见，Orchestrator 汇总共同点、冲突点和建议取舍。
+### 8.1 Runtime 上下文类型
 
-### 6.4 implement_review
+（`ConversationAgentRuntimeContext` 结构不变，存入 `conversation_agents.runtime_context_json`。）
 
-适用：
+### 8.2 Adapter 契约（现状 + V2 增量）
 
-- 代码实现。
-- UI 接 API。
-- 后端功能补齐。
-
-V2 默认只允许一个主写 Agent。其他 Agent 做 review / verify。
-
-### 6.5 pipeline
-
-适用：
-
-- 长链路任务。
-- 需要设计、实现、验证、修复和汇总。
-
-按阶段串行推进。
-
-## 7. 上下文管理
-
-### 7.1 事实源上下文
-
-数据库是事实源，包括：
-
-- conversation
-- conversation_agents
-- messages
-- tasks
-- task_runs
-- artifacts
-- workspace_path
-- adapter health
-- runtime inspection
-
-### 7.2 Planner 上下文
-
-Planner 不读取完整历史，只读取压缩上下文：
-
-- 当前用户消息。
-- 当前群聊成员 roster。
-- 每个成员 alias、platform、能力、状态。
-- 可探测模型信息。
-- 最近 N 条关键消息。
-- 会话摘要。
-- 已 pin 的长期上下文。
-- 最近任务结果摘要。
-- 当前 workspace、附件、产物摘要。
-
-### 7.3 子 Agent 执行上下文
-
-每个子 Agent 只拿与任务相关的上下文：
-
-- 用户原始请求。
-- Orchestrator 分配的任务。
-- 自己的 alias 和职责。
-- 必要历史摘要。
-- 上游任务结果。
-- 相关附件 / artifact / workspace 路径。
-- 输出要求：直接作为群聊成员回复。
-
-不要把完整群聊历史全部塞给每个 Agent。
-
-### 7.4 Evaluator / Aggregator 上下文
-
-用于检查和汇总：
-
-- 用户原始目标。
-- Orchestrator 计划。
-- 每个 task 的状态。
-- 每个 Agent 的最终回复。
-- 产物和验证结果。
-- 错误原因。
-
-### 7.5 摘要策略
-
-V2 初版：
-
-- 最近 10-20 条消息直接带入。
-- 更早历史用 `conversation.summary`。
-- 每个 task 完成后生成 `task_result_summary`。
-- `pinned` 作为数据结构预留，UI 可后续补。
-
-## 8. Agent Runtime 与模型探测
-
-不要让用户在设置里手动填写内置 Agent 的模型或档位。模型信息由 adapter / Orchestrator 尽力获取，并放入 Orchestrator 上下文。
-
-### 8.1 Runtime 上下文
-
-```ts
-type ConversationAgentRuntimeContext = {
-  conversationAgentId: string;
-  alias: string;
-  platform: string;
-  adapter: string;
-  modelName?: string | null;
-  modelFamily?: string | null;
-  qualityTier?: "cheap" | "balanced" | "strong" | "unknown";
-  contextWindow?: number | null;
-  supportsToolUse?: boolean;
-  supportsVision?: boolean;
-  supportsFileEdit?: boolean;
-  runtimeStatus: "available" | "unavailable" | "unknown";
-  modelInfoSource: "env" | "config" | "cli_json_event" | "provider" | "unknown";
-  confidence: "high" | "medium" | "low";
-  lastUpdatedAt: number;
-};
-```
-
-### 8.2 Adapter inspectRuntime
-
-扩展 adapter 契约：
+**现状**（`lib/adapters/types.ts`，V2 Invoker 必须遵守）：
 
 ```ts
 type AgentAdapter = {
   platform: AgentPlatform | string;
+  capabilities: AdapterCapabilities;  // supportsApproval / supportsChoice
   healthcheck(): Promise<AdapterHealth>;
-  inspectRuntime?(): Promise<AgentRuntimeInfo>;
   run(params: AdapterRunParams): AsyncIterable<AgentEvent>;
+};
+
+type AdapterRunParams = {
+  runId: string;
+  conversationId: string;
+  workspacePath: string;
+  messages: AdapterMessage[];
+  attachments: AdapterAttachment[];
+  externalSessionId?: string;
+  signal: AbortSignal;
+  requestInteraction(...): Promise<InteractionDecision>;
+  saveExternalSessionId(...): void;
 };
 ```
 
-探测顺序：
+**V2 新增**（可选方法）：
 
-1. AgentHub 显式传入的 `--model` 或 provider model。
-2. 环境变量。
-3. CLI 配置文件。
-4. 运行时 JSON / verbose event。
-5. unknown。
-
-### 8.3 没有模型信息时
-
-如果无法获取模型名，不要猜。
-
-```json
-{
-  "modelName": null,
-  "qualityTier": "unknown",
-  "modelInfoSource": "unknown",
-  "confidence": "low"
-}
+```ts
+inspectRuntime?(): Promise<AgentRuntimeInfo>;
 ```
 
-Planner 看到 unknown 时，只按能力、权限、历史成功率和可用状态分配，不得声称某 Agent 更便宜或更强。
+V2.1 实现；探测顺序与 unknown 处理不变。Planner 在 `modelName` unknown 时仅按能力与 availability 调度。
 
-### 8.4 调度使用模型信息的原则
+### 8.3–8.4
 
-模型信息只是优化项，不是必要项。
+（不变。）
 
-优先级：
+---
+
+## 附录 H. 数据模型
+
+### 9.1 现状摘要（V1 + V1.5，实施 V2 前已存在）
 
 ```text
-用户显式指定
-> Agent 能力匹配
-> 权限 / 工具能力
-> 可用性 / 历史成功率
-> 模型质量 / 成本信息
+conversation_agents          # V1 单聊锁定语义；须 V2 migration
+├── id, conversation_id, agent_id, role, locked_at, created_at
+└── UNIQUE (conversation_id, agent_id)   # ⚠ 阻止同 Agent 多实例
+
+messages
+├── role: user | assistant | system | tool
+├── agent_id (nullable)
+└── 无 author_conversation_agent_id / orchestrator_task_id
+
+agent_runs
+├── conversation_id, agent_id, status (含 awaiting_interaction)
+└── 无 conversation_agent_id
+
+agent_interactions           # V1.5
+├── … conversation_agent_id, orchestrator_task_id (nullable)
+
+agent_external_sessions      # V1 已有，Invoker 复用
 ```
 
-复杂任务优先选择 `strong` 或上下文更大的 Agent；简单任务可选择 `cheap` / `balanced`。如果模型信息 unknown，则降级为能力驱动调度。
-
-## 9. 数据模型增量
-
-在 V1 schema 基础上补充。
+### 9.2 V2 新增表
 
 ```text
-providers
-├── id
-├── name
-├── protocol
-├── base_url
-├── api_key_encrypted
-├── default_model
-├── enabled
-├── created_at
-└── updated_at
+providers                    # 见 TECH_DESIGN.md §3.5
+├── id, name, protocol, base_url, api_key_encrypted, default_model, enabled, …
 
-orchestrator_settings
-├── id
-├── planner_provider_id
-└── updated_at
-
-conversation_agents
-├── id
-├── conversation_id
-├── agent_id
-├── alias
-├── display_name
-├── role_hint
-├── status
-├── joined_at
-└── runtime_context_json
+orchestrator_settings        # 即 TECH_DESIGN 中 OrchestratorConfig
+├── id, planner_provider_id, updated_at
 
 orchestrator_runs
-├── id
-├── conversation_id
-├── user_message_id
-├── mode
-├── goal
-├── status
-├── plan_json
-├── evaluation_json
-├── clarification_round
-├── started_at
-└── finished_at
+├── id, conversation_id, user_message_id, mode, goal, status, plan_json,
+│   evaluation_json, clarification_round, started_at, finished_at
+└── status: planning | awaiting_user | running | done | error | cancelled
 
 orchestrator_tasks
-├── id
-├── orchestrator_run_id
-├── conversation_id
-├── assignee_conversation_agent_id
-├── round_id
-├── role
-├── description
-├── permission
-├── depends_on_json
-├── status
-├── result_message_id
-├── result_summary
-├── error
-├── started_at
-└── finished_at
+├── id, orchestrator_run_id, conversation_id, assignee_conversation_agent_id,
+│   round_id, role, description, permission, depends_on_json, status,
+│   result_message_id, result_summary, error, started_at, finished_at
+└── status: pending | running | awaiting_interaction | done | error | cancelled
 ```
 
-`orchestrator_runs.status` 至少包含：`planning` | `awaiting_user` | `running` | `done` | `failed` | `cancelled`。  
-`phase=clarify` 结束时为 `awaiting_user`，用户下一条消息复用同一目标上下文重新 plan。
+### 9.3 V2 扩展已有表
 
-`messages` 需要能表达：
+`**conversation_agents**`（群聊 roster；单聊仍可用 `role=primary` 一行）：
 
-- `role = "orchestrator"` 或 `author_type = "orchestrator"`。
-- `role = "assistant"` 且绑定 `author_conversation_agent_id`。
-- 消息关联 `orchestrator_task_id`。
+```text
++ alias              (NOT NULL；单聊可等于 slug)
++ display_name
++ role_hint          (nullable)
++ status             (active | idle | running | unavailable)
++ joined_at          (替代 locked_at 语义；单聊 migration 可 copied from locked_at)
++ runtime_context_json
+- 删除 UNIQUE (conversation_id, agent_id)
++ UNIQUE (conversation_id, alias)
++ INDEX (conversation_id, agent_id)   # 非唯一，允许多实例
+```
 
-## 10. API 增量
+`**messages**`：
 
-### 10.1 Provider
+```text
++ role 枚举扩展 orchestrator
++ author_conversation_agent_id  (nullable FK)
++ orchestrator_task_id          (nullable)
+```
+
+`**agent_runs**`：
+
+```text
++ conversation_agent_id  (nullable；群聊 sub-agent run 必填)
+```
+
+`**conversations.status**`：V2 可继续用 `running|done|empty`；`orchestrator_runs.awaiting_user` 表达澄清等待，避免重复枚举。
+
+### 9.4 状态命名约定
+
+与现有 schema 一致：库表用 `**error**`（非 `failed`）；API/SSE 对外可映射为 `error` 或文档说明等价关系。
+
+---
+
+## 附录 I. API
+
+### 10.1 V1.5 已有（V2 群聊复用，不改契约）
+
+```text
+GET  /api/conversations/:id/interactions?status=pending
+POST /api/interactions/:interactionId/respond
+```
+
+实现：`lib/interactions/service.ts`。群聊与单聊共用 respond；pending 列表用于刷新恢复，**交互 UI 渲染在消息流**（按 `messageId` / `conversationAgentId` 挂载），右栏不拉选项/审批按钮。
+
+### 10.2 V2 新增 — Provider
 
 ```text
 GET    /api/providers
@@ -674,201 +724,99 @@ DELETE /api/providers/:providerId
 POST   /api/providers/:providerId/test
 ```
 
-### 10.2 Orchestrator 设置
+设置页当前用 `lib/mock/providers.ts`；V2.1 换真实 CRUD。
+
+### 10.3 V2 新增 — Orchestrator 设置
 
 ```text
 GET   /api/orchestrator/settings
 PATCH /api/orchestrator/settings
 ```
 
-### 10.3 群聊
+### 10.4 V2 修改 — 群聊与 stop
 
-V2 修改 V1 group 400 边界：
+**现状**：`mode=group` 的 create / send / regenerate → **400**；`GET /api/conversations` 仅返回 `single`。
+
+**V2**：
 
 ```text
-POST /api/conversations { mode: "group" }
-POST /api/messages      // group conversation 走 Orchestrator
+POST /api/conversations              { mode: "group" }  # 放开
+GET  /api/conversations              # 含 group 会话（或 query mode=）
+POST /api/messages                   # group → OrchestratorService
 GET  /api/conversations/:id/messages
-GET  /api/conversations/:id/stream
-POST /api/conversations/:id/stop   // body: { conversationAgentId } 群聊按 Agent 停止；单聊可无 body
+GET  /api/conversations/:id/stream   # 含 V2 orchestrator + task 事件
+POST /api/conversations/:id/stop
+       # 单聊：无 body（现状）
+       # 群聊：{ conversationAgentId: string }
 ```
 
-**Stop 响应**（与 V1 一致扩展）：
+Stop 响应扩展：`{ ok, runId?, taskId?, alreadyStopped? }`。
 
-```json
-{ "ok": true, "runId": "...", "taskId": "..." }
-```
-
-无 running task 时：`{ "ok": true, "alreadyStopped": true }`。
-
-### 10.4 Runtime inspection
+### 10.5 V2 新增 — Runtime inspection
 
 ```text
 GET /api/agents/runtime
 ```
 
-返回各 adapter health + runtime info，用于设置页展示和 Orchestrator roster 构造。
+在 `GET /api/agents/health` 之上返回 runtime 探测结果（V2.1）。
 
-## 11. SSE 事件增量
+---
 
-新增事件：
+## 附录 J. SSE 事件
+
+### 11.1 V1 / V1.5 已有（群聊继续用）
 
 ```text
-orchestrator_clarify
-orchestrator_plan
+connected, ping
+message_delta, message_replace, message_status
+run_status          # 含 awaiting_interaction
+interaction_requested
+interaction_resolved
+```
+
+定义：`lib/conversations/stream-bus.ts`。群聊 sub-agent 流式仍走 `message_delta`；消息 API 须带 `authorConversationAgentId`。
+
+### 11.2 V2 新增
+
+```text
+orchestrator_plan       # 或复用 orchestrator 普通 message + 右栏 task_created
 task_created
-task_status
+task_status             # 含 awaiting_interaction
 task_result
-agent_runtime_status
+agent_runtime_status    # 可选，roster 刷新
 orchestrator_summary
 ```
 
-子 Agent 的流式回复仍使用消息事件，但消息必须带 `author_conversation_agent_id`。
+`orchestrator_clarify` 可不单独建事件——澄清内容即 `role=orchestrator` 消息 + `orchestrator_runs.status=awaiting_user`。
 
-## 12. 前端改造
+---
+
+## 附录 K. 前端改造（规格摘要）
 
 ### 12.1 群聊消息流
 
-- 去掉真实群聊路径上的 mock 数据。
-- 支持 Orchestrator 气泡。
-- Orchestrator **澄清追问**与**计划/汇总**均用普通消息气泡展示（澄清消息无 task、无子 Agent 流式）。
-- 支持多 Agent assistant 气泡。
-- 每个子 Agent 回复显示 alias、头像、平台、状态。
-- 子 Agent 流式输出直接进入对应气泡。
-- 子 Agent 处于 `running` 时，头像旁显示停止按钮；点击调用 `POST .../stop` 并传 `conversationAgentId`。
-- **不在消息流内嵌任务进度卡片**；Orchestrator 计划与汇总以普通消息气泡展示，任务明细只在右栏。
+- 真实群聊路径 **移除** `lib/mock/group-conversation.ts` 的 `groupMessages` 与内嵌 `tasks`（与附录 A.2 矛盾，V2.4 删除 `MessageBubble` 对 mock `tasks` 的 task-board 渲染）。
+- Orchestrator / 子 Agent / 用户气泡；澄清与计划/汇总均为 **普通文本气泡**，无 task 卡片。
+- 子 Agent running 时头像旁 stop → `POST .../stop` + `conversationAgentId`。
+- 群聊 **Approval / Choice**：与单聊相同，挂在 **触发该 run 的 Agent 气泡下方** inline；多 Agent 时每个 pending 卡片跟各自气泡，不集中到右栏。
 
 ### 12.2 Composer
 
-- 新群聊初始化态要求用户 @ 两个或以上 Agent；少于两个有效 mention 时不发送给 Planner。
-- 初始化后只允许 @ 已加入 alias。
-- @ 未加入 Agent 时展示 V2 不支持中途邀请的提示。
+- 初始化：≥2 个有效 Agent mention（slug）；示例 `@claude-code @codex`（对齐 `ConversationSetup`）。
+- 初始化后：仅 @ 已入群 **alias**。
+- 未入群 @ → 提示「请新建群聊」。
+- 工作区未选时禁用发送（同单聊）。
 
 ### 12.3 右栏
 
-群聊右栏是 **任务进度与状态的唯一主界面**（消息流不重复做 task 卡片）：
+群聊右栏 **只看、不操作交互**；结构对齐 `ContextPanel.tsx` → `GroupContext()`（**不是** `SingleContext`）：
 
-- 多 Agent 状态（含 running 时该行可显示停止，与消息流头像 stop 等价）。
-- 当前 Orchestrator run。
-- task 列表：assignee、状态、依赖；随 SSE `task_status` 实时更新。
-- 产物按来源 Agent 聚合。
+- **参与上下文**：各 Agent alias + Orchestrator 状态文案（如「等待批准」「运行中」「已分派 N 任务」）；含 `awaiting_approval` / `awaiting_choice` 摘要。
+- **任务分派**：`orchestrator_tasks` 列表（assignee、状态、依赖）；随 SSE `task_status` 更新。
+
+**群聊运行态右栏不要**（单聊 `SingleContext` 才有）：工作区区块、产出文件区块、进度 todo、Approval/Choice 按钮或选项列表。工作区在 Composer 选择；新建空群时 `NewConversationContext` 可展示「工作区 / 可用 Agent」引导。
 
 ### 12.4 设置页
 
-- Provider CRUD。
-- Orchestrator planner provider 选择。
-- Adapter health 和 runtime inspection 展示。
-- 不提供内置 Agent 模型/档位手动填写入口。
+当前 `SettingsModal` 中 Provider / Orchestrator 为 mock。V2.1 接真实 API；health 已有 `GET /api/agents/health`，runtime 接 §10.5。
 
-## 13. 实施阶段
-
-### Phase V2.0 文档与契约
-
-- 更新 API 契约，补充 group / Orchestrator / Provider。
-- 明确 schema 增量。
-- 明确 SSE 事件。
-
-验收：
-
-- 文档能解释群聊中子 Agent 直接回复。
-- 文档能解释 Orchestrator 不写入。
-- 文档能解释 single-agent 调度。
-- 文档能解释澄清阶段不 dispatch、用户未指定分工时由 Orchestrator 分配。
-
-### Phase V2.1 Provider 与 runtime inspection
-
-- 新增 Provider 表和 CRUD。
-- 新增 Orchestrator settings。
-- 扩展 adapter `inspectRuntime?()`。
-- runtime info 放入 Orchestrator roster。
-
-验收：
-
-- 可保存 `openai_compatible` Provider。
-- Orchestrator 能用 Provider 完成一次 planner 调用。
-- CLI Agent 模型信息获取不到时显示 unknown。
-
-### Phase V2.2 群聊后端
-
-- 允许创建 group conversation。
-- 群聊工作区选择与单聊对齐（未选工作区不可发消息）。
-- 实现群聊初始化。
-- 支持同基础 Agent 多实例。
-- 消息支持 `author_conversation_agent_id`。
-- 实现按 `conversationAgentId` 的 stop API 与 SSE。
-
-验收：
-
-- 未选工作区无法发送群聊首条消息。
-- 第一条群聊消息 @ 多 Agent 后写入 roster。
-- `claude1` / `claude2` 可区分。
-- 初始化后 @ 新 Agent 被明确拒绝。
-- stop 某 Agent 后其消息与 task 为 `cancelled`，同轮其他 Agent 不受影响。
-
-### Phase V2.3 Orchestrator P0
-
-- 实现 `service / planner / validator / scheduler / invoker / evaluator / aggregator`。
-- Planner 支持 `phase=clarify | execute`；澄清轮次上限与 §3.6 一致。
-- 支持 `single_agent`、`parallel_investigation`、`compare`、`implement_review`。
-- 子 Agent 回复写入群聊消息流。
-
-验收：
-
-- 模糊需求时 Orchestrator 先追问，不立刻调用子 Agent。
-- 用户补充信息后 Orchestrator 再出计划并 dispatch。
-- 用户未指定 Agent 分工时，Orchestrator 自动分配并说明理由。
-- 已初始化群聊中的简单任务只调用一个已入群 Agent，并解释原因。
-- 复杂任务分派多个 Agent。
-- 子 Agent 各自流式回复。
-- Orchestrator 最后总结。
-
-### Phase V2.4 前端真实联动
-
-- 群聊消息流接真实 API / SSE。
-- 右栏任务状态接真实 task。
-- Composer 支持初始化、alias 校验与工作区选择（同单聊）。
-- 子 Agent 头像 stop 与右栏 stop 均可取消当前 run。
-
-验收：
-
-- 群聊从初始化到多 Agent 回复完整可演示。
-- 任务状态仅在右栏展示并与 SSE 同步；消息流无内嵌 task 卡片。
-- stop 后用户 `@` 指定 Agent 可继续分配单任务。
-- 刷新后群聊历史、任务状态、Agent 身份恢复。
-
-### Phase V2.5 QA 与收口
-
-- 跑 typecheck / build。
-- 人工验证单聊不退化。
-- 人工验证群聊主路径。
-- AI review 只看 bug、边界、退化和缺失测试。
-- 问题写入 `docs/state/TOFIX.md`。
-
-## 14. V2 Demo 脚本
-
-1. 新建群聊并选择工作区。
-2. 输入 `@claude1 @claude2 帮我把登录页做了`（故意模糊）。
-3. Orchestrator 发出澄清问题，不调用子 Agent。
-4. 用户补充：邮箱+密码、对接现有 API、先做 MVP。
-5. Orchestrator 发送计划并说明 claude1 / claude2 分工。
-6. Claude 1 流式回复技术/API 分析。
-7. Claude 2 流式回复 UI 实现思路或代码。
-8. Orchestrator 汇总。
-9. 再发一个简单明确问题，Orchestrator 只派一个 Agent 并解释原因。
-10. 演示 stop 后 `@` 指定 Agent 续派。
-11. 展示右栏多 Agent 状态、任务分派、产物来源。
-
-## 15. 验收标准
-
-- 群聊中子 Agent 直接回复，不由 Orchestrator 统一转述。
-- Orchestrator 能解释为什么在已初始化群聊中只派一个 Agent 或为什么使用多个 Agent。
-- 需求模糊时 Orchestrator 先澄清再 dispatch；用户未指定分工时由 Orchestrator 分配。
-- 同基础 Agent 多实例可区分。
-- Orchestrator 不写代码、不直接执行命令。
-- Provider 支撑 Planner 调用。
-- Runtime inspection 进入 Orchestrator 上下文，模型 unknown 时不硬猜。
-- group conversation 刷新后历史和任务状态可恢复。
-- 群聊工作区规则与单聊一致；未选工作区不可发消息。
-- 任务进度仅在右栏展示，消息流无内嵌 task 卡片。
-- 按 Agent stop 后 SSE 与单聊一致（`message_status` / `run_status` / `task_status`）；用户可 `@` Agent 手动续派任务。
-- 单聊 V1 主链路不退化（含无 body 的 `POST .../stop`）。

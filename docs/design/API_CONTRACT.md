@@ -481,7 +481,7 @@ DELETE /api/providers/:providerId
 POST   /api/providers/:providerId/test
 ```
 
-`protocol` 至少支持 `anthropic` 与 `openai_compatible`。V2 Orchestrator Planner 只使用 `openai_compatible` Provider；V3 自建 `claude_code` Agent 才要求绑定 `anthropic` Provider。
+`protocol` 至少支持 `anthropic` 与 `openai_compatible`。V2 Orchestrator Planner 可使用 `openai_compatible` 或 `anthropic` Provider；V3 自建 `claude_code` Agent 要求绑定 `anthropic` Provider。
 
 ### 4.18 V2 Orchestrator 设置（V2.1 落地）
 

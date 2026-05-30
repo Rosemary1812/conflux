@@ -44,7 +44,7 @@ Provider 是 Conflux **统一的模型 API 配置**（Base URL + Key + 协议 + 
 
 | `protocol` | 说明 | 典型消费者 |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages API 兼容（含 OpenRouter Anthropic Skin、国内厂商 Anthropic 端点） | 自建 Agent（`platform = claude_code`）经 Claude Agent SDK `env` 注入 |
+| `anthropic` | Anthropic Messages API 兼容（含 OpenRouter Anthropic Skin、国内厂商 Anthropic 端点） | 自建 Agent（`platform = claude_code`）经 Claude Agent SDK `env` 注入；**OrchestratorPlanner** |
 | `openai_compatible` | OpenAI Chat Completions 兼容（`/v1/chat/completions` 等） | **OrchestratorPlanner**、调度用自研 Agent（HTTP 客户端，不走 Claude Agent SDK） |
 | （扩展） | 实现期可增加，如厂商专用枚举 | 按消费者文档约定 |
 
@@ -63,7 +63,7 @@ Provider 是 Conflux **统一的模型 API 配置**（Base URL + Key + 协议 + 
 
 | 消费者 | 阶段 | 调用方式 |
 | --- | --- | --- |
-| `OrchestratorPlanner`（编排/调度 Agent） | **V2** | 自研 HTTP 客户端 + 用户选的 `openai_compatible` Provider（或平台默认 Provider）；**不**走 Claude Agent SDK |
+| `OrchestratorPlanner`（编排/调度 Agent） | **V2** | 自研 HTTP 客户端 + 用户选的 `openai_compatible` 或 `anthropic` Provider（或平台默认 Provider）；**不**走 Claude Agent SDK |
 | 自建 Agent `platform = claude_code` | **V3** | Claude Agent SDK + **仅可绑定 `protocol = anthropic` 的 Provider** |
 | 内置 `@claude-code` | V1+ | 默认本机 CLI/OAuth；**不强制**绑定 Provider |
 
