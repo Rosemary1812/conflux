@@ -14,6 +14,13 @@ export type AdapterCapabilities = {
   supportsChoice: AdapterInteractionSupport;
 };
 
+export type AgentRuntimeInfo = {
+  available: boolean;
+  modelName: string | "unknown";
+  source: "adapter" | "cli" | "env" | "unknown";
+  message: string;
+};
+
 export type AdapterMessage = {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
@@ -77,6 +84,7 @@ export type AgentAdapter = {
   platform: AgentPlatform | string;
   capabilities: AdapterCapabilities;
   healthcheck(): Promise<AdapterHealth>;
+  inspectRuntime?(): Promise<AgentRuntimeInfo>;
   run(params: AdapterRunParams): AsyncIterable<AgentEvent>;
 };
 

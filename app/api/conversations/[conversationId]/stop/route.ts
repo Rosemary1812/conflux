@@ -7,13 +7,17 @@ type RouteContext = {
   params: Promise<{ conversationId: string }>;
 };
 
-export async function POST(_: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const { conversationId } = await context.params;
-  const runId = stopConversationRun(conversationId);
+  const body = (await request.json().catch(() => ({}))) as {
+    conversationAgentId?: string;
+  };
 
-  if (!runId) {
+  const result = stopConversationRun(conversationId, body.conversationAgentId);
+
+  if (!result) {
     return NextResponse.json({ ok: true, alreadyStopped: true });
   }
 
-  return NextResponse.json({ ok: true, runId });
+  return NextResponse.json({ ok: true, runId: result.runId, taskId: result.taskId });
 }

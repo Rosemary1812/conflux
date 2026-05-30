@@ -37,6 +37,7 @@ export type MockMessage = {
   artifacts?: ConversationArtifact[];
   interactions?: AgentInteraction[];
   code?: string;
+  authorConversationAgentId?: string;
   artifact?: {
     title: string;
     description: string;
@@ -48,6 +49,24 @@ export type MockMessage = {
     title: string;
     status: string;
   }>;
+};
+
+export type RosterItem = {
+  id: string;
+  alias: string;
+  displayName: string;
+  status: "active" | "idle" | "running" | "unavailable";
+  slug: string;
+};
+
+export type GroupTask = {
+  id: string;
+  assigneeAlias: string;
+  role: string;
+  description: string;
+  status: string;
+  error?: string;
+  summary?: string;
 };
 
 export type MessageAttachment = {

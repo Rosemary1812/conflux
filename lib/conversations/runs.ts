@@ -30,9 +30,28 @@ type StartRunParams = {
   agent: AgentSummary;
   workspacePath: string;
   attachments?: AdapterAttachment[];
+  conversationAgentId?: string;
+  orchestratorTaskId?: string;
+  taskPrompt?: string;
 };
 
-export function startAgentRun({ conversationId, agent, workspacePath, attachments = [] }: StartRunParams) {
+let onTaskCompleted: ((taskId: string, status: "done" | "error" | "cancelled", messageId?: string, error?: string) => void) | null = null;
+
+export function setTaskCompletedCallback(
+  callback: ((taskId: string, status: "done" | "error" | "cancelled", messageId?: string, error?: string) => void) | null
+) {
+  onTaskCompleted = callback;
+}
+
+export function startAgentRun({
+  conversationId,
+  agent,
+  workspacePath,
+  attachments = [],
+  conversationAgentId,
+  orchestratorTaskId,
+  taskPrompt
+}: StartRunParams) {
   const now = Date.now();
   const runId = crypto.randomUUID();
   const assistantMessageId = crypto.randomUUID();
@@ -44,6 +63,7 @@ export function startAgentRun({ conversationId, agent, workspacePath, attachment
       id: runId,
       conversationId,
       agentId: agent.id,
+      conversationAgentId: conversationAgentId ?? null,
       status: "running",
       startedAt: now,
       createdAt: now,
@@ -58,7 +78,9 @@ export function startAgentRun({ conversationId, agent, workspacePath, attachment
       role: "assistant",
       authorName: agent.name,
       agentId: agent.id,
-      content: "",
+      authorConversationAgentId: conversationAgentId ?? null,
+      orchestratorTaskId: orchestratorTaskId ?? null,
+      content: taskPrompt ? `<任务>\n${taskPrompt}\n</任务>\n\n` : "",
       status: "running",
       createdAt: now + 1
     })
@@ -79,30 +101,44 @@ export function startAgentRun({ conversationId, agent, workspacePath, attachment
     agent,
     workspacePath,
     attachments,
+    conversationAgentId,
+    orchestratorTaskId,
     signal: controller.signal
   });
 
   return { runId, assistantMessageId };
 }
 
-export function stopConversationRun(conversationId: string) {
+export function stopConversationRun(
+  conversationId: string,
+  conversationAgentId?: string
+): { runId: string; taskId?: string } | null {
   const db = getDb();
-  const run = db
+  const runs = db
     .select()
     .from(agentRuns)
     .where(eq(agentRuns.conversationId, conversationId))
     .orderBy(agentRuns.createdAt)
-    .all()
-    .reverse()
-    .find((item) => item.status === "running" || item.status === "pending" || item.status === "awaiting_interaction");
+    .all();
 
-  if (!run) {
+  const target = runs
+    .reverse()
+    .find((item) => {
+      const active = item.status === "running" || item.status === "pending" || item.status === "awaiting_interaction";
+      if (!active) return false;
+      if (conversationAgentId) {
+        return item.conversationAgentId === conversationAgentId;
+      }
+      return true;
+    });
+
+  if (!target) {
     return null;
   }
 
-  activeRuns.get(run.id)?.abort();
-  markRunCancelled(conversationId, run.id);
-  return run.id;
+  activeRuns.get(target.id)?.abort();
+  markRunCancelled(conversationId, target.id);
+  return { runId: target.id, taskId: target.conversationAgentId ?? undefined };
 }
 
 async function drainAgentRun({
@@ -112,6 +148,8 @@ async function drainAgentRun({
   agent,
   workspacePath,
   attachments,
+  conversationAgentId,
+  orchestratorTaskId,
   signal
 }: {
   runId: string;
@@ -120,6 +158,8 @@ async function drainAgentRun({
   agent: AgentSummary;
   workspacePath: string;
   attachments: AdapterAttachment[];
+  conversationAgentId?: string;
+  orchestratorTaskId?: string;
   signal: AbortSignal;
 }) {
   let content = "";
@@ -139,7 +179,11 @@ async function drainAgentRun({
       signal,
       requestInteraction(interaction) {
         return requestRunInteraction({
-          interaction,
+          interaction: {
+            ...interaction,
+            conversationAgentId: interaction.conversationAgentId ?? conversationAgentId ?? null,
+            orchestratorTaskId: interaction.orchestratorTaskId ?? orchestratorTaskId ?? null
+          },
           conversationId,
           runId,
           messageId,
@@ -165,7 +209,9 @@ async function drainAgentRun({
         runId,
         workspacePath,
         beforeSnapshot,
-        signal
+        signal,
+        conversationAgentId,
+        orchestratorTaskId
       });
     }
   } catch (error) {
@@ -249,7 +295,9 @@ async function handleAgentEvent({
   runId,
   workspacePath,
   beforeSnapshot,
-  signal
+  signal,
+  conversationAgentId,
+  orchestratorTaskId
 }: {
   event: AgentEvent;
   content: string;
@@ -259,6 +307,8 @@ async function handleAgentEvent({
   workspacePath: string;
   beforeSnapshot: WorkspaceSnapshot;
   signal: AbortSignal;
+  conversationAgentId?: string;
+  orchestratorTaskId?: string;
 }) {
   if (event.type === "text_delta") {
     const nextContent = `${content}${event.delta}`;
@@ -313,8 +363,8 @@ async function handleAgentEvent({
         kind: event.interaction.kind,
         messageId: event.interaction.messageId,
         payload: event.interaction.payload,
-        conversationAgentId: event.interaction.conversationAgentId,
-        orchestratorTaskId: event.interaction.orchestratorTaskId
+        conversationAgentId: event.interaction.conversationAgentId ?? conversationAgentId ?? null,
+        orchestratorTaskId: event.interaction.orchestratorTaskId ?? orchestratorTaskId ?? null
       },
       conversationId,
       runId,
@@ -516,8 +566,9 @@ function getAdapterMessages(conversationId: string): AdapterMessage[] {
     .where(eq(messages.conversationId, conversationId))
     .orderBy(messages.createdAt)
     .all()
+    .filter((message) => message.role !== "orchestrator")
     .map((message) => ({
-      role: message.role,
+      role: message.role as AdapterMessage["role"],
       content: message.content
     }));
 }
@@ -542,6 +593,11 @@ function markRunDone(conversationId: string, runId: string, messageId: string) {
     .run();
   publishConversationEvent(conversationId, { type: "message_status", messageId, status: "done" });
   publishConversationEvent(conversationId, { type: "run_status", runId, status: "done" });
+
+  const msg = getDb().select({ orchestratorTaskId: messages.orchestratorTaskId }).from(messages).where(eq(messages.id, messageId)).get();
+  if (msg?.orchestratorTaskId && onTaskCompleted) {
+    onTaskCompleted(msg.orchestratorTaskId, "done", messageId);
+  }
 }
 
 function markRunErrored({
@@ -582,6 +638,10 @@ function markRunErrored({
     .run();
   publishConversationEvent(conversationId, { type: "message_status", messageId, status: "error", error });
   publishConversationEvent(conversationId, { type: "run_status", runId, status: "error", error });
+
+  if (currentMessage?.orchestratorTaskId && onTaskCompleted) {
+    onTaskCompleted(currentMessage.orchestratorTaskId, "error", messageId, error);
+  }
 }
 
 function markRunCancelled(conversationId: string, runId: string, messageId?: string) {
@@ -592,23 +652,24 @@ function markRunCancelled(conversationId: string, runId: string, messageId?: str
   const now = Date.now();
   const db = getDb();
   cancelPendingRunInteractions(runId);
-  const assistantMessageId =
-    messageId ??
-    db
-      .select({ id: messages.id })
-      .from(messages)
-      .innerJoin(agents, eq(messages.agentId, agents.id))
-      .where(eq(messages.conversationId, conversationId))
-      .orderBy(messages.createdAt)
-      .all()
-      .reverse()
-      .find((message) => message.id)?.id;
+  const assistantMessage =
+    messageId
+      ? db.select({ id: messages.id, orchestratorTaskId: messages.orchestratorTaskId }).from(messages).where(eq(messages.id, messageId)).get()
+      : db
+          .select({ id: messages.id, orchestratorTaskId: messages.orchestratorTaskId })
+          .from(messages)
+          .innerJoin(agents, eq(messages.agentId, agents.id))
+          .where(eq(messages.conversationId, conversationId))
+          .orderBy(messages.createdAt)
+          .all()
+          .reverse()
+          .find((message) => message.id);
 
-  if (assistantMessageId) {
-    db.update(messages).set({ status: "cancelled" }).where(eq(messages.id, assistantMessageId)).run();
+  if (assistantMessage) {
+    db.update(messages).set({ status: "cancelled" }).where(eq(messages.id, assistantMessage.id)).run();
     publishConversationEvent(conversationId, {
       type: "message_status",
-      messageId: assistantMessageId,
+      messageId: assistantMessage.id,
       status: "cancelled"
     });
   }
@@ -622,6 +683,10 @@ function markRunCancelled(conversationId: string, runId: string, messageId?: str
     .where(eq(conversations.id, conversationId))
     .run();
   publishConversationEvent(conversationId, { type: "run_status", runId, status: "cancelled" });
+
+  if (assistantMessage?.orchestratorTaskId && onTaskCompleted) {
+    onTaskCompleted(assistantMessage.orchestratorTaskId, "cancelled", assistantMessage.id);
+  }
 }
 
 function isRunActive(runId: string) {

@@ -3,11 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "@/lib/db/client";
 import { agents, artifacts, conversationAgents, conversations, messageAttachments, messages } from "@/lib/db/schema";
-import { parseAgentMentions, slugFor } from "@/lib/agents/mention";
+import {
+  parseAgentAliasMentions,
+  parseAgentMentions,
+  parseAgentMentionsForRoster,
+  slugFor
+} from "@/lib/agents/mention";
 import type { AdapterAttachment } from "@/lib/adapters/types";
 import type { AgentSummary } from "@/lib/agents/types";
 import type { ConversationMode, ConversationSummary, MockMessage } from "@/lib/conversations/types";
 import { startAgentRun } from "@/lib/conversations/runs";
+import { processGroupMessage } from "@/lib/orchestrator/service";
 
 type ConversationRow = typeof conversations.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
@@ -45,16 +51,11 @@ export function listAgents(): AgentSummary[] {
 
 export function createConversation(input: CreateConversationInput = {}) {
   const mode = input.mode ?? "single";
-
-  if (mode === "group") {
-    throw new ApiError("V1 后端只允许创建 single 会话；群聊保持静态 UI。", 400);
-  }
-
   const now = Date.now();
   const row: typeof conversations.$inferInsert = {
     id: crypto.randomUUID(),
     mode,
-    title: "新建聊天",
+    title: mode === "group" ? "新建群聊" : "新建聊天",
     status: "empty",
     workspacePath: input.workspacePath ? normalizeWorkspacePath(input.workspacePath) : defaultWorkspacePath(),
     createdAt: now,
@@ -73,7 +74,6 @@ export function listConversations(): ConversationSummary[] {
     })
     .from(conversations)
     .leftJoin(agents, eq(conversations.lockedAgentId, agents.id))
-    .where(eq(conversations.mode, "single"))
     .orderBy(desc(conversations.updatedAt))
     .all();
 
@@ -102,11 +102,6 @@ export function getConversation(id: string) {
 
 export function updateConversation(id: string, input: UpdateConversationInput) {
   const conversation = ensureConversation(id);
-
-  if (conversation.mode !== "single") {
-    throw new ApiError("V1 只支持管理 single 会话。", 400);
-  }
-
   const now = Date.now();
   const updates: Partial<typeof conversations.$inferInsert> = {
     updatedAt: now
@@ -143,12 +138,7 @@ export function updateConversation(id: string, input: UpdateConversationInput) {
 }
 
 export function deleteConversation(id: string) {
-  const conversation = ensureConversation(id);
-
-  if (conversation.mode !== "single") {
-    throw new ApiError("V1 只支持删除 single 会话。", 400);
-  }
-
+  ensureConversation(id);
   getDb().delete(conversations).where(eq(conversations.id, id)).run();
 }
 
@@ -185,10 +175,22 @@ export function sendMessage(conversationId: string, content: string, incomingAtt
 
   const conversation = ensureConversation(conversationId);
 
-  if (conversation.mode !== "single") {
-    throw new ApiError("V1 群聊只保留静态 UI，不接真实消息 API。", 400);
+  if (!conversation.workspacePath) {
+    throw new ApiError("未选择工作区，不能发送消息。", 400);
   }
 
+  if (conversation.mode === "group") {
+    return sendGroupMessage(conversation, trimmed, incomingAttachments);
+  }
+
+  return sendSingleMessage(conversation, trimmed, incomingAttachments);
+}
+
+function sendSingleMessage(
+  conversation: typeof conversations.$inferSelect,
+  trimmed: string,
+  incomingAttachments: IncomingAttachment[]
+) {
   const allAgents = listAgents();
   const parsed = parseAgentMentions(trimmed, allAgents);
 
@@ -196,7 +198,7 @@ export function sendMessage(conversationId: string, content: string, incomingAtt
     throw new ApiError(parsed.error, 400);
   }
 
-  const existingLock = getLockedAgent(conversationId);
+  const existingLock = getLockedAgent(conversation.id);
   const selectedAgent = validateSingleChatMention(conversation, existingLock, parsed.mentions);
   const now = Date.now();
   const messageId = crypto.randomUUID();
@@ -207,9 +209,13 @@ export function sendMessage(conversationId: string, content: string, incomingAtt
     db.insert(conversationAgents)
       .values({
         id: crypto.randomUUID(),
-        conversationId,
+        conversationId: conversation.id,
         agentId: selectedAgent.id,
+        alias: slugFor(selectedAgent),
+        displayName: selectedAgent.name,
         role: "primary",
+        status: "active",
+        joinedAt: now,
         lockedAt: now,
         createdAt: now
       })
@@ -219,7 +225,7 @@ export function sendMessage(conversationId: string, content: string, incomingAtt
   db.insert(messages)
     .values({
       id: messageId,
-      conversationId,
+      conversationId: conversation.id,
       role: "user",
       authorName: "你",
       content: trimmed,
@@ -229,10 +235,10 @@ export function sendMessage(conversationId: string, content: string, incomingAtt
     .run();
 
   const storedAttachments = storeMessageAttachments({
-    conversationId,
+    conversationId: conversation.id,
     messageId,
     attachments: incomingAttachments,
-    workspacePath: conversation.workspacePath || defaultWorkspacePath(),
+    workspacePath: conversation.workspacePath,
     now
   });
 
@@ -243,20 +249,162 @@ export function sendMessage(conversationId: string, content: string, incomingAtt
       lockedAgentId: selectedAgent.id,
       updatedAt: now
     })
-    .where(eq(conversations.id, conversationId))
+    .where(eq(conversations.id, conversation.id))
     .run();
 
+  const lockedConversationAgent = existingLock
+    ? db
+        .select()
+        .from(conversationAgents)
+        .where(
+          and(
+            eq(conversationAgents.conversationId, conversation.id),
+            eq(conversationAgents.role, "primary")
+          )
+        )
+        .get()
+    : null;
+
   const run = startAgentRun({
-    conversationId,
+    conversationId: conversation.id,
     agent: selectedAgent,
-    workspacePath: conversation.workspacePath || defaultWorkspacePath(),
-    attachments: storedAttachments.map(toAdapterAttachment)
+    workspacePath: conversation.workspacePath,
+    attachments: storedAttachments.map(toAdapterAttachment),
+    conversationAgentId: lockedConversationAgent?.id
   });
 
   return {
-    conversation: getConversation(conversationId),
-    messages: listMessages(conversationId),
+    conversation: getConversation(conversation.id),
+    messages: listMessages(conversation.id),
     run
+  };
+}
+
+function sendGroupMessage(
+  conversation: typeof conversations.$inferSelect,
+  trimmed: string,
+  incomingAttachments: IncomingAttachment[]
+) {
+  const db = getDb();
+  const roster = db
+    .select()
+    .from(conversationAgents)
+    .where(eq(conversationAgents.conversationId, conversation.id))
+    .orderBy(conversationAgents.joinedAt)
+    .all();
+
+  const now = Date.now();
+  const messageId = crypto.randomUUID();
+
+  if (roster.length === 0) {
+    const allAgents = listAgents();
+    const parsed = parseAgentMentionsForRoster(trimmed, allAgents);
+
+    if (!parsed.ok) {
+      throw new ApiError(parsed.error, 400);
+    }
+
+    if (parsed.mentions.length < 2) {
+      throw new ApiError("群聊首条消息必须 @ 两个或以上 Agent。", 400);
+    }
+
+    for (const mention of parsed.mentions) {
+      db.insert(conversationAgents)
+        .values({
+          id: crypto.randomUUID(),
+          conversationId: conversation.id,
+          agentId: mention.agent.id,
+          alias: mention.alias,
+          displayName: mention.agent.name,
+          role: "member",
+          status: "active",
+          joinedAt: now,
+          lockedAt: now,
+          createdAt: now
+        })
+        .run();
+    }
+
+    db.insert(messages)
+      .values({
+        id: messageId,
+        conversationId: conversation.id,
+        role: "user",
+        authorName: "你",
+        content: trimmed,
+        status: "done",
+        createdAt: now
+      })
+      .run();
+
+    storeMessageAttachments({
+      conversationId: conversation.id,
+      messageId,
+      attachments: incomingAttachments,
+      workspacePath: conversation.workspacePath,
+      now
+    });
+
+    db.update(conversations)
+      .set({
+        title: conversation.title === "新建群聊" ? titleFromMessage(trimmed) : conversation.title,
+        status: "running",
+        updatedAt: now
+      })
+      .where(eq(conversations.id, conversation.id))
+      .run();
+
+    void processGroupMessage(conversation.id, messageId, trimmed);
+
+    return {
+      conversation: getConversation(conversation.id),
+      messages: listMessages(conversation.id),
+      run: null
+    };
+  }
+
+  const rosterAliases = roster.map((r) => r.alias);
+  const aliasParse = parseAgentAliasMentions(trimmed, rosterAliases);
+
+  if (!aliasParse.ok) {
+    throw new ApiError(aliasParse.error, 400);
+  }
+
+  db.insert(messages)
+    .values({
+      id: messageId,
+      conversationId: conversation.id,
+      role: "user",
+      authorName: "你",
+      content: trimmed,
+      status: "done",
+      createdAt: now
+    })
+    .run();
+
+  storeMessageAttachments({
+    conversationId: conversation.id,
+    messageId,
+    attachments: incomingAttachments,
+    workspacePath: conversation.workspacePath,
+    now
+  });
+
+  db.update(conversations)
+    .set({
+      title: conversation.title === "新建群聊" ? titleFromMessage(trimmed) : conversation.title,
+      status: "running",
+      updatedAt: now
+    })
+    .where(eq(conversations.id, conversation.id))
+    .run();
+
+  void processGroupMessage(conversation.id, messageId, trimmed);
+
+  return {
+    conversation: getConversation(conversation.id),
+    messages: listMessages(conversation.id),
+    run: null
   };
 }
 
@@ -300,11 +448,23 @@ export function regenerateMessage(messageId: string) {
 
   getDb().delete(messages).where(eq(messages.id, messageId)).run();
 
+  const lockedConversationAgent = getDb()
+    .select()
+    .from(conversationAgents)
+    .where(
+      and(
+        eq(conversationAgents.conversationId, conversation.id),
+        eq(conversationAgents.role, "primary")
+      )
+    )
+    .get();
+
   const run = startAgentRun({
     conversationId: message.conversationId,
     agent: existingLock,
     workspacePath: conversation.workspacePath || defaultWorkspacePath(),
-    attachments: []
+    attachments: [],
+    conversationAgentId: lockedConversationAgent?.id
   });
 
   return {
@@ -399,7 +559,8 @@ function toMessage(message: MessageRow, agent: AgentRow | null): MockMessage {
     id: message.id,
     author: message.authorName,
     avatar: agent ? slugFor(toAgentSummary(agent)) : undefined,
-    tone: message.role === "user" ? "user" : "agent",
+    tone:
+      message.role === "user" ? "user" : message.role === "orchestrator" ? "orchestrator" : "agent",
     status:
       message.status === "running" || message.status === "done" || message.status === "error" || message.status === "cancelled"
         ? message.status
@@ -410,8 +571,34 @@ function toMessage(message: MessageRow, agent: AgentRow | null): MockMessage {
     }),
     body: message.content,
     attachments: getMessageAttachments(message.id).map(toPublicAttachment),
-    artifacts: getMessageArtifacts(message.id).map(toConversationArtifact)
+    artifacts: getMessageArtifacts(message.id).map(toConversationArtifact),
+    authorConversationAgentId: message.authorConversationAgentId ?? undefined
   };
+}
+
+export function getConversationRoster(conversationId: string) {
+  ensureConversation(conversationId);
+
+  return getDb()
+    .select({
+      id: conversationAgents.id,
+      alias: conversationAgents.alias,
+      displayName: conversationAgents.displayName,
+      status: conversationAgents.status,
+      slug: agents.slug
+    })
+    .from(conversationAgents)
+    .innerJoin(agents, eq(conversationAgents.agentId, agents.id))
+    .where(eq(conversationAgents.conversationId, conversationId))
+    .orderBy(conversationAgents.joinedAt)
+    .all()
+    .map((row) => ({
+      id: row.id,
+      alias: row.alias,
+      displayName: row.displayName ?? row.alias,
+      status: row.status as "active" | "idle" | "running" | "unavailable",
+      slug: row.slug
+    }));
 }
 
 function getMessageAttachments(messageId: string) {

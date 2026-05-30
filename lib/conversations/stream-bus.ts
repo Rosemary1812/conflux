@@ -33,6 +33,31 @@ export type ConversationStreamEvent =
       interactionId: string;
       status: InteractionStatus;
       response?: InteractionDecision;
+    }
+  | {
+      type: "task_created";
+      taskId: string;
+      runId: string;
+      assigneeAlias: string;
+      role: string;
+      description: string;
+    }
+  | {
+      type: "task_status";
+      taskId: string;
+      status: string;
+      error?: string;
+    }
+  | {
+      type: "task_result";
+      taskId: string;
+      messageId: string;
+      summary?: string;
+    }
+  | {
+      type: "orchestrator_summary";
+      runId: string;
+      messageId: string;
     };
 
 type Listener = (event: ConversationStreamEvent) => void;
