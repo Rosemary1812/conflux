@@ -395,8 +395,18 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function eventFromSessionUpdate(update: SessionUpdate): AgentEvent | null {
-  if (update.sessionUpdate === "agent_message_chunk") {
-    const text = extractText(update.content);
+  const raw = update as Record<string, unknown>;
+  const textEventTypes = [
+    "agent_message_chunk",
+    "agent_message",
+    "message",
+    "text",
+    "text_delta",
+    "agent_message_delta"
+  ];
+
+  if (textEventTypes.includes(update.sessionUpdate)) {
+    const text = extractText(raw.content);
 
     if (text) {
       return { type: "text_delta", delta: text };
@@ -441,6 +451,30 @@ function extractText(value: unknown): string {
     return record.value;
   }
 
+  if (typeof record.delta === "string") {
+    return record.delta;
+  }
+
+  if (typeof record.textDelta === "string") {
+    return record.textDelta;
+  }
+
+  if (typeof record.response === "string") {
+    return record.response;
+  }
+
+  if (typeof record.assistantMessage === "string") {
+    return record.assistantMessage;
+  }
+
+  if (typeof record.answer === "string") {
+    return record.answer;
+  }
+
+  if (typeof record.body === "string") {
+    return record.body;
+  }
+
   if (record.content) {
     return extractText(record.content);
   }
@@ -457,6 +491,11 @@ function extractText(value: unknown): string {
     return extractText(record.result);
   }
 
+  if (record.data && typeof record.data === "object") {
+    return extractText(record.data);
+  }
+
+  console.error("[opencode] extractText could not find text field. Available keys:", Object.keys(record).join(", "));
   return "";
 }
 

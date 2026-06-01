@@ -38,13 +38,6 @@ export function MessageBubble({ message, roster, onRegenerate, onRespondInteract
   const senderAvatar =
     tone === "orchestrator" ? "orchestrator" : rosterMember ? rosterMember.slug : message.avatar;
 
-  const senderRole =
-    tone === "orchestrator"
-      ? "调度器"
-      : rosterMember
-        ? statusLabel(rosterMember.status)
-        : message.role;
-
   const canStop =
     message.status === "running" && message.authorConversationAgentId && onStopAgent;
 
@@ -58,9 +51,6 @@ export function MessageBubble({ message, roster, onRegenerate, onRespondInteract
       <div className="message-body">
         <div className="message-sender">
           {tone !== "user" ? <span className="sender-name">{senderName}</span> : null}
-          {senderRole ? (
-            <span className={`sender-role ${message.status ?? ""}`}>{senderRole}</span>
-          ) : null}
           {message.time ? <span>{message.time}</span> : null}
           {canRegenerate ? (
             <button className="message-action-button" onClick={() => onRegenerate?.(message.id)} type="button">
@@ -108,21 +98,6 @@ export function MessageBubble({ message, roster, onRegenerate, onRespondInteract
       </div>
     </div>
   );
-}
-
-function statusLabel(status: string) {
-  switch (status) {
-    case "running":
-      return "运行中";
-    case "idle":
-      return "待命";
-    case "active":
-      return "已激活";
-    case "unavailable":
-      return "不可用";
-    default:
-      return status;
-  }
 }
 
 async function noopRespond() {
