@@ -1,7 +1,7 @@
 import type { AgentSummary } from "@/lib/agents/types";
 import type { AdapterCapabilities } from "@/lib/adapters/types";
 
-export type OrchestratorPhase = "clarify" | "execute";
+export type OrchestratorPhase = "clarify" | "execute" | "chat";
 
 export type OrchestratorMode =
   | "single_agent"
@@ -15,7 +15,7 @@ export type PlannerTask = {
   assigneeAlias: string;
   role: string;
   description: string;
-  permission: "readonly" | "editable" | "restricted-editable";
+  permission?: "readonly" | "editable" | "restricted-editable";
   dependsOn?: string[];
 };
 
@@ -24,7 +24,7 @@ export type OrchestratorPlan = {
   mode: OrchestratorMode;
   goal: string;
   tasks: PlannerTask[];
-  clarificationQuestion?: string;
+  clarificationQuestions?: string[];
 };
 
 export type RosterMember = {

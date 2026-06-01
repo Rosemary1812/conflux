@@ -1,7 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import { publishConversationEvent } from "@/lib/conversations/stream-bus";
 import { getDb } from "@/lib/db/client";
-import { agentInteractions, agentRuns, conversations, messages } from "@/lib/db/schema";
+import { agentInteractions, agentRuns, conversations, messages, orchestratorTasks } from "@/lib/db/schema";
 import { hasInteractionWaiter, resumeInteraction } from "@/lib/interactions/run-bridge";
 import type {
   AgentInteraction,
@@ -47,6 +47,18 @@ export function createInteraction(input: PendingAgentInteraction): AgentInteract
     .where(eq(agentRuns.id, input.runId))
     .run();
 
+  if (input.orchestratorTaskId) {
+    db.update(orchestratorTasks)
+      .set({ status: "awaiting_interaction" })
+      .where(eq(orchestratorTasks.id, input.orchestratorTaskId))
+      .run();
+    publishConversationEvent(input.conversationId, {
+      type: "task_status",
+      taskId: input.orchestratorTaskId,
+      status: "awaiting_interaction"
+    });
+  }
+
   const interaction = toAgentInteraction(row);
   publishConversationEvent(input.conversationId, { type: "run_status", runId: input.runId, status: "awaiting_interaction" });
   publishConversationEvent(input.conversationId, { type: "interaction_requested", interaction });
@@ -89,6 +101,17 @@ export function resolveInteraction(interactionId: string, decision: InteractionD
     .set({ status: "running", updatedAt: now })
     .where(eq(agentRuns.id, current.runId))
     .run();
+  if (current.orchestratorTaskId) {
+    db.update(orchestratorTasks)
+      .set({ status: "running" })
+      .where(eq(orchestratorTasks.id, current.orchestratorTaskId))
+      .run();
+    publishConversationEvent(current.conversationId, {
+      type: "task_status",
+      taskId: current.orchestratorTaskId,
+      status: "running"
+    });
+  }
   db.update(conversations)
     .set({ status: "running", updatedAt: now })
     .where(eq(conversations.id, current.conversationId))

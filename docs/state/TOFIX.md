@@ -6,51 +6,11 @@
 
 - 时间：2026-05-30
   优先级：P1
-  所属范围：Orchestrator / Planner
-  问题/目标：Planner LLM 把 roster 中的 `platform` 字段（如 `claude_code`）和 `alias`（如 `claude-code`）混淆，返回的 `assignee_alias` 使用了下划线版本（`claude_code`）而非连字符版本（`claude-code`），导致 `validatePlan` 找不到匹配 alias，用户看到「计划校验失败」报错。
-  解决方案：A) Prompt 层——在 `buildPlannerPrompt` 和 SYSTEM_PROMPT 中强调 alias 必须使用 roster 中列出的精确值，并将 platform 信息弱化/隐藏以避免混淆；B) 代码容错层——在 `normalizePlan` 中增加 alias fuzzy match：exact match 失败后尝试下划线↔连字符互换、忽略大小写等规则，在 roster 中找最接近的匹配。
-  涉及修改文件：`lib/orchestrator/planner.ts`（SYSTEM_PROMPT + `buildPlannerPrompt` + `normalizePlan`）
-  验收标准：`@claude @opencode` 初始化群聊后，Planner 返回的 task 中 `assignee_alias` 与 roster alias 精确匹配（或通过 fuzzy match 自动纠正）；不再出现「计划校验失败：unknown alias ...」报错。
-
-- 时间：2026-05-30
-  优先级：P1
-  所属范围：Orchestrator / 调度
-  问题/目标：当上游 task 进入 `error` 状态时，下游依赖 task 永远停留在 `pending`，`orchestrator_runs` 无法进入终态，导致会话状态一直 `running`。
-  解决方案：在 `handleTaskCompleted` 中检测依赖失败场景，将下游 task 自动标记为 `cancelled` 或 `error`（并附带 `dependency_failed` 原因），触发 `areAllTasksTerminal` 完成 Orchestrator run finalize。
-  涉及修改文件：`lib/orchestrator/service.ts`
-  验收标准：上游 task error 后，下游 task 在 1 秒内自动变为 cancelled/error；Orchestrator run 最终进入 `done` 并生成 summary（说明部分 task 失败）；会话状态回到 `done`。
-
-- 时间：2026-05-30
-  优先级：P1
   所属范围：适配器 / OpenCode ACP
   问题/目标：单聊中 `@opencode hi` 等简单对话触发 `运行失败：OpenCode completed without returning assistant text.`。根因是 `lib/adapters/opencode.ts` 的 `extractText` 函数和 `eventFromSessionUpdate` 对 OpenCode ACP 返回的文本字段覆盖不全——OpenCode 把回复放在了 `extractText` 不认识的"抽屉"里（如 `delta`、`response`、`answer` 等字段名），导致 adapter 找不到文本而报错。此前 2026-05-29 的修复增加了部分兜底，但未覆盖所有可能的字段变体。
   解决方案：A) 扩展 `extractText` 的字段覆盖——增加 `delta`、`textDelta`、`response`、`assistantMessage`、`answer`、`body` 等常见变体；B) 扩展 `eventFromSessionUpdate` 的事件类型覆盖——增加 `agent_message`（完整消息）、`message`、`text` 等可能的事件名；C) 增加调试日志——当 `extractText` 返回空时，记录原始数据结构的 key 到 stderr，便于排查未来新变体。
   涉及修改文件：`lib/adapters/opencode.ts`（`extractText`、`eventFromSessionUpdate`）
   验收标准：`@opencode hi`、`@opencode 你好` 等简单对话能正常返回 assistant 文本且 message/run 状态为 `done`；不再出现 `OpenCode completed without returning assistant text.`；`npm run typecheck`、`npm run build` 通过。
-
-- 时间：2026-05-30
-  优先级：P2
-  所属范围：Orchestrator / Planner
-  问题/目标：Planner prompt 对模糊需求的判断偏保守，用户发送明确需求（如"直接做"）后仍可能返回 `phase=clarify`，导致连续 2 轮澄清。
-  解决方案：微调 Planner system prompt 中 clarify 触发条件，增加对"直接做/开始/执行"等关键词的识别权重；或在 `processGroupMessage` 中增加 clarification_round 上限硬拦截（超过 2 轮强制 execute）。
-  涉及修改文件：`lib/orchestrator/planner.ts`
-  验收标准：连续 2 轮 clarify 后第 3 轮必定 execute；用户说"直接做"时 execute 概率 > 80%。
-
-- 时间：2026-05-30
-  优先级：P2
-  所属范围：API / 群聊
-  问题/目标：`regenerateMessage` 仍限制 `conversation.mode !== "single"` 时返回 400，群聊不支持重新生成。
-  解决方案：扩展 regenerate 逻辑支持群聊——按 message 的 `authorConversationAgentId` 找到对应 Agent，重新触发 `startAgentRun` 或 `invokeAgentForTask`；或至少对 Orchestrator 消息提供重新生成功能。
-  涉及修改文件：`lib/conversations/service.ts`、`app/api/messages/[messageId]/regenerate/route.ts`
-  验收标准：群聊中可对子 Agent 的 assistant 消息点击重新生成；重新生成后旧消息被替换、新 run 启动。
-
-- 时间：2026-05-30
-  优先级：P2
-  所属范围：适配器 / Provider
-  问题/目标：外部 Planner Provider（如 Kimi）偶发对正常开发类请求返回 `400 The request was rejected because it was considered high risk`，导致子 Agent run 直接失败。
-  解决方案：评估是否需要更换 Provider、添加请求重试（换模型或简化 prompt）、或在 Orchestrator 中增加 task 失败后的自动重试/降级逻辑。
-  涉及修改文件：`lib/orchestrator/invoker.ts`、`lib/orchestrator/service.ts`
-  验收标准：正常开发类任务（写登录页、读目录等）的 task 失败率 < 10%；失败后 UI 有明确错误提示。
 
 - 时间：2026-05-22 20:21
   优先级：待定
@@ -61,6 +21,56 @@
   验收标准：`npm audit --audit-level=moderate` 不再报告该 `postcss` 告警，且 `npm run build`、`npm run typecheck` 通过。
 
 ## 已做
+
+- 时间：2026-05-30
+  优先级：P2
+  所属范围：适配器 / Provider
+  问题/目标：外部 Planner Provider（如 Kimi）偶发对正常开发类请求返回 `400 The request was rejected because it was considered high risk`，导致子 Agent run 直接失败。
+  解决方案：评估是否需要更换 Provider、添加请求重试（换模型或简化 prompt）、或在 Orchestrator 中增加 task 失败后的自动重试/降级逻辑。
+  涉及修改文件：`lib/orchestrator/invoker.ts`、`lib/orchestrator/service.ts`
+  验收标准：正常开发类任务（写登录页、读目录等）的 task 失败率 < 10%；失败后 UI 有明确错误提示。
+  完成时间：2026-06-01
+  验证结果：已随 V2.5 计划一并修复；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-30
+  优先级：P2
+  所属范围：API / 群聊
+  问题/目标：`regenerateMessage` 仍限制 `conversation.mode !== "single"` 时返回 400，群聊不支持重新生成。
+  解决方案：扩展 regenerate 逻辑支持群聊——按 message 的 `authorConversationAgentId` 找到对应 Agent，重新触发 `startAgentRun` 或 `invokeAgentForTask`；或至少对 Orchestrator 消息提供重新生成功能。
+  涉及修改文件：`lib/conversations/service.ts`、`app/api/messages/[messageId]/regenerate/route.ts`
+  验收标准：群聊中可对子 Agent 的 assistant 消息点击重新生成；重新生成后旧消息被替换、新 run 启动。
+  完成时间：2026-06-01
+  验证结果：已随 V2.5 计划一并修复；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-30
+  优先级：P2
+  所属范围：Orchestrator / Planner
+  问题/目标：Planner prompt 对模糊需求的判断偏保守，用户发送明确需求（如"直接做"）后仍可能返回 `phase=clarify`，导致连续 2 轮澄清。
+  解决方案：微调 Planner system prompt 中 clarify 触发条件，增加对"直接做/开始/执行"等关键词的识别权重；或在 `processGroupMessage` 中增加 clarification_round 上限硬拦截（超过 2 轮强制 execute）。
+  涉及修改文件：`lib/orchestrator/planner.ts`
+  验收标准：连续 2 轮 clarify 后第 3 轮必定 execute；用户说"直接做"时 execute 概率 > 80%。
+  完成时间：2026-06-01
+  验证结果：已随 V2.5 计划一并修复；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-30
+  优先级：P1
+  所属范围：Orchestrator / 调度
+  问题/目标：当上游 task 进入 `error` 状态时，下游依赖 task 永远停留在 `pending`，`orchestrator_runs` 无法进入终态，导致会话状态一直 `running`。
+  解决方案：在 `handleTaskCompleted` 中检测依赖失败场景，将下游 task 自动标记为 `cancelled` 或 `error`（并附带 `dependency_failed` 原因），触发 `areAllTasksTerminal` 完成 Orchestrator run finalize。
+  涉及修改文件：`lib/orchestrator/service.ts`
+  验收标准：上游 task error 后，下游 task 在 1 秒内自动变为 cancelled/error；Orchestrator run 最终进入 `done` 并生成 summary（说明部分 task 失败）；会话状态回到 `done`。
+  完成时间：2026-06-01
+  验证结果：已随 V2.5 计划一并修复；`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-05-30
+  优先级：P1
+  所属范围：Orchestrator / Planner
+  问题/目标：Planner LLM 把 roster 中的 `platform` 字段（如 `claude_code`）和 `alias`（如 `claude-code`）混淆，返回的 `assignee_alias` 使用了下划线版本（`claude_code`）而非连字符版本（`claude-code`），导致 `validatePlan` 找不到匹配 alias，用户看到「计划校验失败」报错。
+  解决方案：A) Prompt 层——在 `buildPlannerPrompt` 和 SYSTEM_PROMPT 中强调 alias 必须使用 roster 中列出的精确值，并将 platform 信息弱化/隐藏以避免混淆；B) 代码容错层——在 `normalizePlan` 中增加 alias fuzzy match：exact match 失败后尝试下划线↔连字符互换、忽略大小写等规则，在 roster 中找最接近的匹配。
+  涉及修改文件：`lib/orchestrator/planner.ts`（SYSTEM_PROMPT + `buildPlannerPrompt` + `normalizePlan`）
+  验收标准：`@claude @opencode` 初始化群聊后，Planner 返回的 task 中 `assignee_alias` 与 roster alias 精确匹配（或通过 fuzzy match 自动纠正）；不再出现「计划校验失败：unknown alias ...」报错。
+  完成时间：2026-06-01
+  验证结果：已随 V2.5 计划一并修复；`npm run typecheck`、`npm run build` 通过。
 
 - 时间：2026-05-30
   优先级：P1

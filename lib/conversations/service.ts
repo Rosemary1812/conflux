@@ -2,7 +2,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "@/lib/db/client";
-import { agents, artifacts, conversationAgents, conversations, messageAttachments, messages } from "@/lib/db/schema";
+import { agents, artifacts, conversationAgents, conversations, messageAttachments, messages, orchestratorTasks } from "@/lib/db/schema";
 import {
   parseAgentAliasMentions,
   parseAgentMentions,
@@ -14,6 +14,8 @@ import type { AgentSummary } from "@/lib/agents/types";
 import type { ConversationMode, ConversationSummary, MockMessage } from "@/lib/conversations/types";
 import { startAgentRun } from "@/lib/conversations/runs";
 import { processGroupMessage } from "@/lib/orchestrator/service";
+import { invokeAgentForTask } from "@/lib/orchestrator/invoker";
+import type { OrchestratorTaskRecord } from "@/lib/orchestrator/types";
 
 type ConversationRow = typeof conversations.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
@@ -382,7 +384,7 @@ function sendGroupMessage(
     })
     .run();
 
-  storeMessageAttachments({
+  const storedAttachments = storeMessageAttachments({
     conversationId: conversation.id,
     messageId,
     attachments: incomingAttachments,
@@ -398,6 +400,33 @@ function sendGroupMessage(
     })
     .where(eq(conversations.id, conversation.id))
     .run();
+
+  // D1: direct assign when exactly one agent is mentioned
+  if (aliasParse.aliases.length === 1) {
+    const targetAlias = aliasParse.aliases[0];
+    const targetConversationAgent = roster.find((r) => r.alias.toLowerCase() === targetAlias);
+    if (targetConversationAgent) {
+      const agentRow = db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, targetConversationAgent.agentId))
+        .get();
+      if (agentRow) {
+        const run = startAgentRun({
+          conversationId: conversation.id,
+          agent: toAgentSummary(agentRow),
+          workspacePath: conversation.workspacePath,
+          attachments: storedAttachments.map(toAdapterAttachment),
+          conversationAgentId: targetConversationAgent.id
+        });
+        return {
+          conversation: getConversation(conversation.id),
+          messages: listMessages(conversation.id),
+          run
+        };
+      }
+    }
+  }
 
   void processGroupMessage(conversation.id, messageId, trimmed);
 
@@ -425,53 +454,116 @@ export function regenerateMessage(messageId: string) {
 
   const conversation = ensureConversation(message.conversationId);
 
-  if (conversation.mode !== "single") {
-    throw new ApiError("V1 群聊不支持重新生成。", 400);
-  }
+  if (conversation.mode === "single") {
+    const existingLock = getLockedAgent(message.conversationId);
 
-  const existingLock = getLockedAgent(message.conversationId);
+    if (!existingLock || message.agentId !== existingLock.id) {
+      throw new ApiError("只能重新生成当前锁定 Agent 的回复。", 400);
+    }
 
-  if (!existingLock || message.agentId !== existingLock.id) {
-    throw new ApiError("只能重新生成当前锁定 Agent 的回复。", 400);
-  }
+    const latestAssistant = getDb()
+      .select()
+      .from(messages)
+      .where(and(eq(messages.conversationId, message.conversationId), eq(messages.role, "assistant")))
+      .orderBy(desc(messages.createdAt))
+      .get();
 
-  const latestAssistant = getDb()
-    .select()
-    .from(messages)
-    .where(and(eq(messages.conversationId, message.conversationId), eq(messages.role, "assistant")))
-    .orderBy(desc(messages.createdAt))
-    .get();
+    if (latestAssistant?.id !== messageId) {
+      throw new ApiError("当前只支持重新生成最近一条 Agent 回复。", 400);
+    }
 
-  if (latestAssistant?.id !== messageId) {
-    throw new ApiError("当前只支持重新生成最近一条 Agent 回复。", 400);
-  }
+    getDb().delete(messages).where(eq(messages.id, messageId)).run();
 
-  getDb().delete(messages).where(eq(messages.id, messageId)).run();
-
-  const lockedConversationAgent = getDb()
-    .select()
-    .from(conversationAgents)
-    .where(
-      and(
-        eq(conversationAgents.conversationId, conversation.id),
-        eq(conversationAgents.role, "primary")
+    const lockedConversationAgent = getDb()
+      .select()
+      .from(conversationAgents)
+      .where(
+        and(
+          eq(conversationAgents.conversationId, conversation.id),
+          eq(conversationAgents.role, "primary")
+        )
       )
-    )
-    .get();
+      .get();
 
-  const run = startAgentRun({
-    conversationId: message.conversationId,
-    agent: existingLock,
-    workspacePath: conversation.workspacePath || defaultWorkspacePath(),
-    attachments: [],
-    conversationAgentId: lockedConversationAgent?.id
-  });
+    const run = startAgentRun({
+      conversationId: message.conversationId,
+      agent: existingLock,
+      workspacePath: conversation.workspacePath || defaultWorkspacePath(),
+      attachments: [],
+      conversationAgentId: lockedConversationAgent?.id
+    });
 
-  return {
-    conversation: getConversation(message.conversationId),
-    messages: listMessages(message.conversationId),
-    run
-  };
+    return {
+      conversation: getConversation(message.conversationId),
+      messages: listMessages(message.conversationId),
+      run
+    };
+  }
+
+  if (conversation.mode === "group") {
+    if (!message.authorConversationAgentId) {
+      throw new ApiError("群聊中只能重新生成 Agent 的回复。", 400);
+    }
+
+    const ca = getDb()
+      .select()
+      .from(conversationAgents)
+      .where(eq(conversationAgents.id, message.authorConversationAgentId))
+      .get();
+    if (!ca) {
+      throw new ApiError("Agent 已不在当前群聊中。", 400);
+    }
+
+    const agentRow = getDb().select().from(agents).where(eq(agents.id, ca.agentId)).get();
+    if (!agentRow) {
+      throw new ApiError("Agent 不存在。", 400);
+    }
+
+    getDb().delete(messages).where(eq(messages.id, messageId)).run();
+
+    if (message.orchestratorTaskId) {
+      const task = getDb()
+        .select()
+        .from(orchestratorTasks)
+        .where(eq(orchestratorTasks.id, message.orchestratorTaskId))
+        .get();
+      if (!task) {
+        throw new ApiError("关联的任务已不存在。", 400);
+      }
+
+      getDb()
+        .update(orchestratorTasks)
+        .set({ status: "running", resultMessageId: null, resultSummary: null, error: null })
+        .where(eq(orchestratorTasks.id, message.orchestratorTaskId))
+        .run();
+
+      const { runId, messageId: newMessageId } = invokeAgentForTask({
+        conversationId: conversation.id,
+        task: task as unknown as OrchestratorTaskRecord,
+        workspacePath: conversation.workspacePath || defaultWorkspacePath()
+      });
+      return {
+        conversation: getConversation(message.conversationId),
+        messages: listMessages(message.conversationId),
+        run: { runId, assistantMessageId: newMessageId }
+      };
+    }
+
+    const run = startAgentRun({
+      conversationId: message.conversationId,
+      agent: toAgentSummary(agentRow),
+      workspacePath: conversation.workspacePath || defaultWorkspacePath(),
+      attachments: [],
+      conversationAgentId: ca.id
+    });
+    return {
+      conversation: getConversation(message.conversationId),
+      messages: listMessages(message.conversationId),
+      run
+    };
+  }
+
+  throw new ApiError("不支持的会话模式。", 400);
 }
 
 function validateSingleChatMention(

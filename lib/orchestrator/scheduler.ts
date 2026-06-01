@@ -2,32 +2,6 @@ import { eq, and } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { orchestratorTasks } from "@/lib/db/schema";
 import { publishConversationEvent } from "@/lib/conversations/stream-bus";
-import type { OrchestratorPlan } from "./types";
-
-export function createTasksFromPlan(plan: OrchestratorPlan, orchestratorRunId: string, conversationId: string) {
-  const db = getDb();
-  const now = Date.now();
-  const roundId = `round-${now}`;
-
-  for (const task of plan.tasks) {
-    db.insert(orchestratorTasks)
-      .values({
-        id: task.id,
-        orchestratorRunId,
-        conversationId,
-        assigneeConversationAgentId: "", // filled by caller after roster lookup
-        roundId,
-        role: task.role,
-        description: task.description,
-        permission: task.permission,
-        dependsOnJson: task.dependsOn ? JSON.stringify(task.dependsOn) : null,
-        status: "pending"
-      })
-      .run();
-  }
-
-  return roundId;
-}
 
 export function updateTaskStatus(
   taskId: string,

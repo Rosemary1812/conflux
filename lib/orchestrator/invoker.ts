@@ -3,20 +3,19 @@ import { getDb } from "@/lib/db/client";
 import { conversationAgents, agents } from "@/lib/db/schema";
 import { startAgentRun } from "@/lib/conversations/runs";
 import type { AgentSummary } from "@/lib/agents/types";
-import type { AdapterAttachment, AdapterMessage } from "@/lib/adapters/types";
+import type { AdapterAttachment } from "@/lib/adapters/types";
 import type { OrchestratorTaskRecord } from "./types";
+import { buildTaskContext } from "./context";
 
 export function invokeAgentForTask({
   conversationId,
   task,
   workspacePath,
-  contextMessages,
   attachments = []
 }: {
   conversationId: string;
   task: OrchestratorTaskRecord;
   workspacePath: string;
-  contextMessages: AdapterMessage[];
   attachments?: AdapterAttachment[];
 }): { runId: string; messageId: string } {
   const db = getDb();
@@ -45,6 +44,11 @@ export function invokeAgentForTask({
     description: agentRow.description
   };
 
+  const context = buildTaskContext(task, 2000);
+  const taskPrompt = context
+    ? `<上下文>\n${context}\n</上下文>\n\n<任务>\n${task.description}\n</任务>`
+    : task.description;
+
   const run = startAgentRun({
     conversationId,
     agent,
@@ -52,7 +56,7 @@ export function invokeAgentForTask({
     attachments,
     conversationAgentId: task.assigneeConversationAgentId,
     orchestratorTaskId: task.id,
-    taskPrompt: task.description
+    taskPrompt
   });
 
   return { runId: run.runId, messageId: run.assistantMessageId };

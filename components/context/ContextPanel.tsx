@@ -326,7 +326,7 @@ function GroupContext({ roster, tasks }: { roster: RosterItem[]; tasks: GroupTas
                 {task.description.length > 40 ? "..." : ""}
               </p>
               <em>
-                {task.status}
+                {task.status === "awaiting_interaction" ? "等待交互" : task.status}
                 {task.error ? ` · ${task.error}` : ""}
               </em>
             </div>

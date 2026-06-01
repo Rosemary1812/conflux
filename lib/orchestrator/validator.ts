@@ -28,14 +28,14 @@ export function validatePlan(plan: OrchestratorPlan, roster: RosterMember[]): Va
     return { ok: false, error: "Task dependencies contain a cycle." };
   }
 
-  if (plan.mode === "single_agent" && plan.tasks.length !== 1) {
-    return { ok: false, error: "single_agent mode must have exactly 1 task." };
+  for (const task of plan.tasks) {
+    const member = roster.find((r) => r.alias === task.assigneeAlias);
+    if (member && member.status === "unavailable") {
+      return { ok: false, error: `Agent "${task.assigneeAlias}" is unavailable and cannot be assigned tasks.` };
+    }
   }
 
   if (plan.mode === "implement_review") {
-    if (plan.tasks.length !== 2) {
-      return { ok: false, error: "implement_review mode must have exactly 2 tasks." };
-    }
     const implement = plan.tasks.find((t) => t.role === "implement" || t.permission === "editable");
     if (!implement) {
       return { ok: false, error: "implement_review mode requires an implement task with editable permission." };
@@ -44,10 +44,6 @@ export function validatePlan(plan: OrchestratorPlan, roster: RosterMember[]): Va
     if (member && member.capabilities.supportsApproval === "none") {
       return { ok: false, error: `Agent "${implement.assigneeAlias}" does not support approval interactions and cannot be assigned implement tasks.` };
     }
-  }
-
-  if (plan.mode === "compare" && plan.tasks.length !== 2) {
-    return { ok: false, error: "compare mode must have exactly 2 tasks." };
   }
 
   return { ok: true };
