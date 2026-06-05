@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "@/lib/db/client";
@@ -147,7 +147,7 @@ export function deleteConversation(id: string) {
 export function listMessages(conversationId: string): MockMessage[] {
   ensureConversation(conversationId);
 
-  return getDb()
+  const rows = getDb()
     .select({
       message: messages,
       agent: agents
@@ -156,8 +156,141 @@ export function listMessages(conversationId: string): MockMessage[] {
     .leftJoin(agents, eq(messages.agentId, agents.id))
     .where(eq(messages.conversationId, conversationId))
     .orderBy(asc(messages.createdAt))
-    .all()
-    .map(({ message, agent }) => toMessage(message, agent));
+    .all();
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const messageIds = rows.map(({ message }) => message.id);
+
+  const attachmentRows = getDb()
+    .select()
+    .from(messageAttachments)
+    .where(inArray(messageAttachments.messageId, messageIds))
+    .orderBy(asc(messageAttachments.createdAt))
+    .all();
+
+  const attachmentsByMessage = new Map<string, MessageAttachmentRow[]>();
+  for (const att of attachmentRows) {
+    const list = attachmentsByMessage.get(att.messageId) ?? [];
+    list.push(att);
+    attachmentsByMessage.set(att.messageId, list);
+  }
+
+  const artifactRows = getDb()
+    .select()
+    .from(artifacts)
+    .where(inArray(artifacts.messageId, messageIds))
+    .orderBy(asc(artifacts.createdAt))
+    .all();
+
+  const artifactsByMessage = new Map<string, ArtifactRow[]>();
+  for (const art of artifactRows) {
+    if (!art.messageId) continue;
+    const list = artifactsByMessage.get(art.messageId) ?? [];
+    list.push(art);
+    artifactsByMessage.set(art.messageId, list);
+  }
+
+  return rows.map(({ message, agent }) =>
+    toMessage(message, agent, {
+      attachments: attachmentsByMessage.get(message.id) ?? [],
+      artifacts: artifactsByMessage.get(message.id) ?? []
+    })
+  );
+}
+
+export type ListMessagesPaginatedResult = {
+  messages: MockMessage[];
+  hasMore: boolean;
+};
+
+export function listMessagesPaginated(
+  conversationId: string,
+  options: { limit?: number; beforeId?: string } = {}
+): ListMessagesPaginatedResult {
+  ensureConversation(conversationId);
+
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+
+  let beforeTime: number | undefined;
+  if (options.beforeId) {
+    const anchor = getDb()
+      .select({ createdAt: messages.createdAt })
+      .from(messages)
+      .where(and(eq(messages.id, options.beforeId), eq(messages.conversationId, conversationId)))
+      .get();
+    if (anchor) {
+      beforeTime = anchor.createdAt;
+    }
+  }
+
+  const conditions = beforeTime
+    ? and(eq(messages.conversationId, conversationId), lt(messages.createdAt, beforeTime))
+    : eq(messages.conversationId, conversationId);
+
+  const rows = getDb()
+    .select({
+      message: messages,
+      agent: agents
+    })
+    .from(messages)
+    .leftJoin(agents, eq(messages.agentId, agents.id))
+    .where(conditions)
+    .orderBy(desc(messages.createdAt))
+    .limit(limit + 1)
+    .all();
+
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+
+  // Reverse to chronological order for UI
+  pageRows.reverse();
+
+  if (pageRows.length === 0) {
+    return { messages: [], hasMore: false };
+  }
+
+  const messageIds = pageRows.map(({ message }) => message.id);
+
+  const attachmentRows = getDb()
+    .select()
+    .from(messageAttachments)
+    .where(inArray(messageAttachments.messageId, messageIds))
+    .orderBy(asc(messageAttachments.createdAt))
+    .all();
+
+  const attachmentsByMessage = new Map<string, MessageAttachmentRow[]>();
+  for (const att of attachmentRows) {
+    const list = attachmentsByMessage.get(att.messageId) ?? [];
+    list.push(att);
+    attachmentsByMessage.set(att.messageId, list);
+  }
+
+  const artifactRows = getDb()
+    .select()
+    .from(artifacts)
+    .where(inArray(artifacts.messageId, messageIds))
+    .orderBy(asc(artifacts.createdAt))
+    .all();
+
+  const artifactsByMessage = new Map<string, ArtifactRow[]>();
+  for (const art of artifactRows) {
+    if (!art.messageId) continue;
+    const list = artifactsByMessage.get(art.messageId) ?? [];
+    list.push(art);
+    artifactsByMessage.set(art.messageId, list);
+  }
+
+  const mappedMessages = pageRows.map(({ message, agent }) =>
+    toMessage(message, agent, {
+      attachments: attachmentsByMessage.get(message.id) ?? [],
+      artifacts: artifactsByMessage.get(message.id) ?? []
+    })
+  );
+
+  return { messages: mappedMessages, hasMore };
 }
 
 export type IncomingAttachment = {
@@ -620,7 +753,6 @@ function toConversationSummary(conversation: ConversationRow, agent: AgentRow | 
     status: conversation.status,
     avatar: agent ? slugFor(toAgentSummary(agent)) : "claude-code",
     workspacePath: conversation.workspacePath || defaultWorkspacePath(),
-    artifacts: listConversationArtifacts(conversation.id).map(toConversationArtifact),
     lockedAgent: agent ? toAgentSummary(agent) : null,
     archivedAt: conversation.archivedAt,
     updatedAt: conversation.updatedAt
@@ -646,7 +778,11 @@ function toConversationArtifact(artifact: ArtifactRow) {
   };
 }
 
-function toMessage(message: MessageRow, agent: AgentRow | null): MockMessage {
+function toMessage(
+  message: MessageRow,
+  agent: AgentRow | null,
+  preloaded?: { attachments: MessageAttachmentRow[]; artifacts: ArtifactRow[] }
+): MockMessage {
   return {
     id: message.id,
     author: message.authorName,
@@ -662,8 +798,8 @@ function toMessage(message: MessageRow, agent: AgentRow | null): MockMessage {
       minute: "2-digit"
     }),
     body: message.content,
-    attachments: getMessageAttachments(message.id).map(toPublicAttachment),
-    artifacts: getMessageArtifacts(message.id).map(toConversationArtifact),
+    attachments: (preloaded?.attachments ?? getMessageAttachments(message.id)).map(toPublicAttachment),
+    artifacts: (preloaded?.artifacts ?? getMessageArtifacts(message.id)).map(toConversationArtifact),
     authorConversationAgentId: message.authorConversationAgentId ?? undefined
   };
 }

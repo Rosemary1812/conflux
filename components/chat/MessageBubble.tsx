@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Copy, FileText, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentIcon } from "@/components/agents/AgentIcon";
@@ -20,7 +20,7 @@ type MessageBubbleProps = {
   onStopAgent?: (conversationAgentId: string) => Promise<void>;
 };
 
-export function MessageBubble({ message, roster, onRegenerate, onRespondInteraction, onStopAgent }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, roster, onRegenerate, onRespondInteraction, onStopAgent }: MessageBubbleProps) {
   const tone = message.tone ?? "agent";
   const canRegenerate = tone === "agent" && message.status !== "running" && Boolean(onRegenerate);
 
@@ -98,6 +98,15 @@ export function MessageBubble({ message, roster, onRegenerate, onRespondInteract
       </div>
     </div>
   );
+}, messagePropsEqual);
+
+function messagePropsEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
+  if (prev.message.id !== next.message.id) return false;
+  if (prev.message.body !== next.message.body) return false;
+  if (prev.message.status !== next.message.status) return false;
+  if ((prev.message.interactions?.length ?? 0) !== (next.message.interactions?.length ?? 0)) return false;
+  if (prev.roster !== next.roster) return false;
+  return true;
 }
 
 async function noopRespond() {

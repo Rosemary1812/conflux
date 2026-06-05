@@ -1,6 +1,7 @@
 "use client";
 
-import { PanelRightClose, PanelRightOpen, TerminalSquare } from "lucide-react";
+import { Loader2, PanelRightClose, PanelRightOpen, TerminalSquare } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
 import { ConversationSetup } from "@/components/chat/ConversationSetup";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { ConversationSummary, ConversationView, MockMessage, RosterItem } from "@/lib/conversations/types";
@@ -10,9 +11,12 @@ type MessageStreamProps = {
   conversation: ConversationSummary | null;
   draftWorkspacePath?: string;
   error: string | null;
+  hasMoreMessages?: boolean;
   isContextCollapsed: boolean;
   isLoading: boolean;
+  isLoadingMore?: boolean;
   messages: MockMessage[];
+  onLoadMore?: () => void;
   onRegenerate?: (messageId: string) => Promise<void>;
   onRespondInteraction?: (interactionId: string, decision: InteractionDecision) => Promise<void>;
   onStopAgent?: (conversationAgentId: string) => Promise<void>;
@@ -26,9 +30,12 @@ export function MessageStream({
   conversation,
   draftWorkspacePath,
   error,
+  hasMoreMessages,
   isContextCollapsed,
   isLoading,
+  isLoadingMore,
   messages,
+  onLoadMore,
   onRegenerate,
   onRespondInteraction,
   onStopAgent,
@@ -44,6 +51,29 @@ export function MessageStream({
     (!isGroup && !conversation?.lockedAgent && messages.length === 0);
   const title = getTitle(view, conversation);
   const workspacePath = conversation?.workspacePath ?? draftWorkspacePath;
+  const threadRef = useRef<HTMLDivElement>(null);
+  const prevScrollHeight = useRef(0);
+
+  const handleScroll = useCallback(() => {
+    const el = threadRef.current;
+    if (!el || !onLoadMore || isLoadingMore || !hasMoreMessages) return;
+
+    if (el.scrollTop < 80) {
+      prevScrollHeight.current = el.scrollHeight;
+      onLoadMore();
+    }
+  }, [onLoadMore, isLoadingMore, hasMoreMessages]);
+
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+
+    const newScrollHeight = el.scrollHeight;
+    const heightDiff = newScrollHeight - prevScrollHeight.current;
+    if (heightDiff > 0 && prevScrollHeight.current > 0) {
+      el.scrollTop = heightDiff;
+    }
+  }, [messages.length]);
 
   return (
     <div className="message-stream">
@@ -84,7 +114,19 @@ export function MessageStream({
         ) : isNew ? (
           <ConversationSetup view={isGroup ? "new-group" : "new-single"} />
         ) : (
-          <div className="message-thread">
+          <div className="message-thread" onScroll={handleScroll} ref={threadRef}>
+            {hasMoreMessages ? (
+              <div className="load-more-hint">
+                {isLoadingMore ? (
+                  <>
+                    <Loader2 size={14} className="spin" />
+                    <span>加载中...</span>
+                  </>
+                ) : (
+                  <span>向上滚动加载更多</span>
+                )}
+              </div>
+            ) : null}
             <div className="message-date">今天</div>
             {messages.map((message) => (
               <MessageBubble

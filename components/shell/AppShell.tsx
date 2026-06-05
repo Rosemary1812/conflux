@@ -22,6 +22,8 @@ export function AppShell() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MockMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [pendingInteractions, setPendingInteractions] = useState<AgentInteraction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +50,7 @@ export function AppShell() {
   useEffect(() => {
     if (!activeConversationId) {
       setMessages([]);
+      setHasMoreMessages(true);
       setPendingInteractions([]);
       setRoster([]);
       setOrchestratorTasks([]);
@@ -239,18 +242,57 @@ export function AppShell() {
 
   async function loadMessages(conversationId: string) {
     setError(null);
+    setHasMoreMessages(true);
 
     try {
       const response = await fetch(`/api/conversations/${conversationId}/messages`);
-      const payload = (await response.json()) as { messages?: MockMessage[]; error?: string };
+      const payload = (await response.json()) as {
+        messages?: MockMessage[];
+        hasMore?: boolean;
+        error?: string;
+      };
 
       if (!response.ok) {
         throw new Error(payload.error ?? "加载消息失败。");
       }
 
       setMessages(payload.messages ?? []);
+      setHasMoreMessages(payload.hasMore ?? false);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "加载消息失败。");
+    }
+  }
+
+  async function loadMoreMessages(conversationId: string) {
+    if (isLoadingMore || !hasMoreMessages || messages.length === 0) {
+      return;
+    }
+
+    setIsLoadingMore(true);
+    setError(null);
+
+    try {
+      const beforeId = messages[0]?.id;
+      const response = await fetch(
+        `/api/conversations/${conversationId}/messages?beforeId=${encodeURIComponent(beforeId)}`
+      );
+      const payload = (await response.json()) as {
+        messages?: MockMessage[];
+        hasMore?: boolean;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "加载更多消息失败。");
+      }
+
+      const olderMessages = payload.messages ?? [];
+      setMessages((current) => [...olderMessages, ...current]);
+      setHasMoreMessages(payload.hasMore ?? false);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "加载更多消息失败。");
+    } finally {
+      setIsLoadingMore(false);
     }
   }
 
@@ -615,9 +657,16 @@ export function AppShell() {
           conversation={activeConversation}
           draftWorkspacePath={draftWorkspacePath}
           error={error}
+          hasMoreMessages={hasMoreMessages}
           isContextCollapsed={contextCollapsed}
           isLoading={isLoading}
+          isLoadingMore={isLoadingMore}
           messages={messagesWithInteractions}
+          onLoadMore={() => {
+            if (activeConversationId) {
+              void loadMoreMessages(activeConversationId);
+            }
+          }}
           onRegenerate={regenerateMessage}
           onRespondInteraction={respondInteraction}
           onStopAgent={stopAgent}

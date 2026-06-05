@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, FileUp, FolderGit2, ImagePlus, Square, X } from "lucide-react";
+import { ArrowUp, FileUp, FolderGit2, ImagePlus, Loader2, Square, X } from "lucide-react";
 import { FormEvent, useRef, useState } from "react";
 import type { AttachmentReference } from "@/lib/conversations/types";
 
@@ -34,6 +34,7 @@ export function Composer({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isSelectingWorkspace, setIsSelectingWorkspace] = useState(false);
   const contentRef = useRef(content);
   const attachmentsRef = useRef(attachments);
   const displayWorkspace = workspacePath ?? "未选择";
@@ -99,11 +100,16 @@ export function Composer({
   }
 
   async function handleWorkspaceClick() {
-    if (!onWorkspaceSelect || disabled) {
+    if (!onWorkspaceSelect || disabled || isSelectingWorkspace) {
       return;
     }
 
-    await onWorkspaceSelect();
+    setIsSelectingWorkspace(true);
+    try {
+      await onWorkspaceSelect();
+    } finally {
+      setIsSelectingWorkspace(false);
+    }
   }
 
   async function selectAttachments(imageOnly = false) {
@@ -218,14 +224,14 @@ export function Composer({
           </button>
           <button
             className="workspace-pill"
-            disabled={disabled || !onWorkspaceSelect}
+            disabled={disabled || !onWorkspaceSelect || isSelectingWorkspace}
             onClick={handleWorkspaceClick}
             type="button"
           >
-            <FolderGit2 size={16} />
+            {isSelectingWorkspace ? <Loader2 size={16} className="spin" /> : <FolderGit2 size={16} />}
             <span>
               <small>当前工作区</small>
-              <strong>{displayWorkspace}</strong>
+              <strong>{isSelectingWorkspace ? "正在打开…" : displayWorkspace}</strong>
             </span>
           </button>
           <button

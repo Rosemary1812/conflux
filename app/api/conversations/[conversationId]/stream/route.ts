@@ -1,5 +1,4 @@
 import { subscribeToConversation } from "@/lib/conversations/stream-bus";
-import { listMessages } from "@/lib/conversations/service";
 import { listConversationInteractions } from "@/lib/interactions/service";
 
 export const runtime = "nodejs";
@@ -25,17 +24,6 @@ export async function GET(_: Request, context: RouteContext) {
       });
 
       send("connected", { ok: true });
-
-      for (const message of listMessages(conversationId)) {
-        if (message.tone === "agent" && message.status) {
-          send("message_replace", {
-            type: "message_replace",
-            messageId: message.id,
-            content: message.body,
-            status: message.status
-          });
-        }
-      }
 
       for (const interaction of listConversationInteractions(conversationId, "pending")) {
         send("interaction_requested", { type: "interaction_requested", interaction });

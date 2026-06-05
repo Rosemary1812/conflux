@@ -6,14 +6,6 @@
 
 > **主线变更（2026-05-27）**：Approval 与选项交互已升格为 **V1.5 主线**（`roadmap.md` + `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md`）。V2 启动前须完成 V1.5；群聊 Approval UI 在 V2.4 接入。
 
-- 时间：2026-05-30
-  优先级：P2
-  所属范围：UI / 单聊
-  问题/目标：单聊消息流中，Agent 消息气泡的发送者信息区域（头像右侧）会显示一个 `已激活` 的状态 tag（来自 `MessageBubble.tsx` 中 `statusLabel(rosterMember.status)` 的 `active` 分支）。该 tag 在每条 Agent 消息旁重复出现，视觉上显得繁琐冗余，用户不需要在每条消息上都看到这个状态标识。
-  解决方案：移除单聊消息气泡中的状态 tag 展示。可选方案：① 直接删除 `senderRole` 的渲染逻辑；② 或仅在 `running` 状态时显示动态标签（如「运行中」+ 停止按钮），`active`/`idle` 等静态状态不显示。推荐方案①，保持消息头部简洁，状态信息保留在右栏上下文面板中。
-  涉及修改文件：`components/chat/MessageBubble.tsx`（删除或简化 `senderRole` 渲染）
-  验收标准：单聊中 Agent 消息气泡头部只显示名字和时间，不再显示 `已激活`/`待命` 等状态 tag；群聊消息气泡若也有类似逻辑同步处理；`npm run typecheck`、`npm run build` 通过。
-
 - 时间：2026-05-25 11:57
   优先级：P2
   所属范围：适配器 / QA
@@ -23,7 +15,62 @@
   验收标准：用户上传图片/文件并 @Agent 发送后，Agent 回复能基于附件路径进行处理；消息刷新后附件仍可查看/下载；不支持直接读图的 Agent 有明确限制说明。
   当前验证：本机 Claude Code CLI 可用（`claude --version` 为 2.1.119），Codex CLI 未在 PATH 中找到；Claude 附件路径 smoke 在 120 秒内未返回，尚不能判定真实端到端通过。
 
+- 时间：2026-06-05
+  优先级：P2
+  所属范围：UI / 工作区选择
+  问题/目标：当前 Windows 工作区选择器使用 `System.Windows.Forms.FolderBrowserDialog`，对话框老旧、启动慢、不支持粘贴路径，整体体验差。
+  解决方案：换用现代 Windows 文件选择器（如 `IFileDialog` / `System.Windows.Forms.OpenFileDialog` 配合文件夹选择模式），启动更快、支持地址栏粘贴、体验更贴近资源管理器。
+  涉及修改文件：`app/api/workspace/select/route.ts`
+  验收标准：点击工作区按钮后对话框弹出明显更快；支持粘贴路径；选择后工作区路径正常回传。
+
+- 时间：2026-06-05
+  优先级：P2
+  所属范围：API / 工作区选择
+  问题/目标：当前工作区选择器后端通过新起 `powershell.exe` 进程调用对话框，PowerShell 冷启动耗时明显，导致用户点击后数秒才有反馈。
+  解决方案：① 预启动并复用 PowerShell 进程避免冷启动；② 或换用 Node.js 原生 addon / `child_process` 直接调用 Windows API 减少中间层；③ 或评估前端 `<input webkitdirectory>` 方案是否可替代。
+  涉及修改文件：`app/api/workspace/select/route.ts`、可能新增辅助模块
+  验收标准：点击工作区按钮到对话框弹出延迟控制在 500ms 以内；`npm run typecheck`、`npm run build` 通过。
+
 ## 已做
+
+- 时间：2026-06-05
+  优先级：P2
+  所属范围：UI / 单聊
+  问题/目标：单聊消息流中，Agent 消息气泡的发送者信息区域会显示一个 `已激活` 的状态 tag，视觉上繁琐冗余。
+  解决方案：直接删除 `senderRole` / `statusLabel` 的渲染逻辑，消息头部仅保留名字和时间，状态信息保留在右栏上下文面板。
+  涉及修改文件：`components/chat/MessageBubble.tsx`
+  验收标准：单聊/群聊中 Agent 消息气泡头部不再显示 `已激活`/`待命` 等状态 tag；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-06-05
+  验证结果：`npm run typecheck`、`npm run build` 通过；代码中已无状态 tag 渲染逻辑。
+
+- 时间：2026-06-05
+  优先级：P2
+  所属范围：API / 性能 — 消息分页
+  问题/目标：`listMessages` 无分页，一次性加载会话全部历史消息。群聊中多 Agent 并行回复，消息量增长快；长会话首次加载时返回数据量大、序列化慢、前端渲染慢。
+  解决方案：
+  - 后端新增 `listMessagesPaginated(conversationId, { limit, beforeId })`，用 `limit + 1` 技巧判断 `hasMore`，批量预加载附件/产物不变。
+  - API `GET /api/conversations/:id/messages` 支持 `?limit=&beforeId=` 查询参数，返回 `{ messages, hasMore }`。
+  - 前端 `AppShell` 新增 `hasMoreMessages` / `isLoadingMore` state；`loadMoreMessages` 传 `beforeId = messages[0].id` 加载更早消息并 prepend 到列表。
+  - `MessageStream` 在 `.message-thread` 添加 `onScroll` 监听，滚动到顶部（scrollTop < 80）触发加载；加载后自动调整 scrollTop 保持视口位置。
+  - SSE 实时推送正常追加到底部，与分页互不干扰。
+  涉及修改文件：`lib/conversations/service.ts`、`app/api/conversations/[conversationId]/messages/route.ts`、`components/shell/AppShell.tsx`、`components/chat/MessageStream.tsx`、`app/globals.css`
+  验收标准：`npm run typecheck`、`npm run build` 通过；长会话首次只加载 50 条；滚动到顶加载更多；新消息 SSE 正常追加。
+  完成时间：2026-06-05
+  验证结果：`npm run typecheck`、`npm run build` 通过。
+
+- 时间：2026-06-05
+  优先级：P1-P2
+  所属范围：性能优化（数据库索引 + N+1 + 前端缓存 + SSE 精简）
+  问题/目标：打开历史对话/群聊速度明显变慢，经调研发现数据库缺少索引、API 存在 N+1 查询、前端全量渲染、SSE 重复查询等多层性能瓶颈。
+  解决方案：
+  1. **数据库索引**：为 `messages`、`agent_interactions`、`agent_runs`、`orchestrator_runs`、`orchestrator_tasks`、`artifacts` 表添加 `conversation_id` 索引（`artifacts` 额外加 `message_id` 索引）。
+  2. **N+1 修复**：`listMessages` 改为先查消息列表，再批量 `IN` 查询附件/产物后映射到各消息；`toConversationSummary` 移除 `artifacts` 查询，左侧列表不再为每个会话查产物；`ContextPanel` 右栏产物改为从 `messages` 聚合提取。
+  3. **前端渲染缓存**：`MessageBubble` 用 `React.memo` + 自定义比较函数包裹，避免父组件刷新时重复渲染未变更消息。
+  4. **SSE 精简**：移除 `/api/conversations/:id/stream` 启动时的全量 `message_replace` replay（前端已主动拉取），保留 `interaction_requested` replay 用于重连恢复 pending 交互。
+  涉及修改文件：`lib/db/schema.ts`、`lib/conversations/service.ts`、`components/chat/MessageBubble.tsx`、`components/context/ContextPanel.tsx`、`app/api/conversations/[conversationId]/stream/route.ts`
+  验收标准：`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-06-05
+  验证结果：`npm run typecheck`、`npm run build` 通过。
 
 - 时间：2026-06-01
   优先级：P1-P2

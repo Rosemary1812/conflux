@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ApiError, listMessages } from "@/lib/conversations/service";
+import { ApiError, listMessagesPaginated } from "@/lib/conversations/service";
 
 export const runtime = "nodejs";
 
@@ -7,10 +7,15 @@ type RouteContext = {
   params: Promise<{ conversationId: string }>;
 };
 
-export async function GET(_: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
     const { conversationId } = await context.params;
-    return NextResponse.json({ messages: listMessages(conversationId) });
+    const { searchParams } = new URL(request.url);
+    const limit = Number(searchParams.get("limit")) || undefined;
+    const beforeId = searchParams.get("beforeId") || undefined;
+
+    const result = listMessagesPaginated(conversationId, { limit, beforeId });
+    return NextResponse.json(result);
   } catch (error) {
     return toErrorResponse(error);
   }

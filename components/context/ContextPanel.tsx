@@ -130,6 +130,8 @@ function SingleContext({ conversation, messages }: { conversation: ConversationS
       ? "运行中"
       : "待命";
 
+  const allArtifacts = messages.flatMap((message) => message.artifacts ?? []);
+
   return (
     <div className="context-content">
       <section className="context-section">
@@ -162,7 +164,7 @@ function SingleContext({ conversation, messages }: { conversation: ConversationS
       </section>
       <section className="context-section">
         <div className="section-title">产出文件</div>
-        <ArtifactFileList artifacts={conversation?.artifacts ?? []} />
+        <ArtifactFileList artifacts={allArtifacts} />
       </section>
     </div>
   );
