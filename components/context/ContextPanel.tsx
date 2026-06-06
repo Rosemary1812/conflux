@@ -310,9 +310,14 @@ function GroupContext({ roster, tasks }: { roster: RosterItem[]; tasks: GroupTas
         <div className="section-title">参与上下文</div>
         <div className="agent-stack-card">
           {roster.map((member) => (
-            <AgentState key={member.id} name={member.alias} slug={member.slug} status={statusLabel(member.status)} />
+            <AgentState
+              detail={`@${member.alias} · ${statusLabel(member.status)}`}
+              key={member.id}
+              name={member.displayName}
+              slug={member.slug}
+            />
           ))}
-          <AgentState name="Orchestrator" slug="orchestrator" status="调度中" />
+          <AgentState detail="调度中" name="Orchestrator" slug="orchestrator" />
         </div>
       </section>
       <section className="context-section">
@@ -320,26 +325,30 @@ function GroupContext({ roster, tasks }: { roster: RosterItem[]; tasks: GroupTas
         {tasks.length === 0 ? (
           <p className="context-note">暂无任务</p>
         ) : (
-          tasks.map((task) => (
-            <div className={`task-card compact ${task.status}`} key={task.id}>
-              <strong>{task.id}</strong>
-              <p>
-                {task.assigneeAlias} · {task.description.slice(0, 40)}
-                {task.description.length > 40 ? "..." : ""}
-              </p>
-              <em>
-                {task.status === "awaiting_interaction" ? "等待交互" : task.status}
-                {task.error ? ` · ${task.error}` : ""}
-              </em>
-            </div>
-          ))
+          tasks.map((task) => {
+            const assignee = roster.find((member) => member.alias === task.assigneeAlias);
+
+            return (
+              <div className={`task-card compact ${task.status}`} key={task.id}>
+                <strong>{task.id}</strong>
+                <p>
+                  {assignee ? `${assignee.displayName}（@${assignee.alias}）` : `@${task.assigneeAlias}`} · {task.description.slice(0, 40)}
+                  {task.description.length > 40 ? "..." : ""}
+                </p>
+                <em>
+                  {task.status === "awaiting_interaction" ? "等待交互" : task.status}
+                  {task.error ? ` · ${task.error}` : ""}
+                </em>
+              </div>
+            );
+          })
         )}
       </section>
     </div>
   );
 }
 
-function AgentState({ name, slug, status }: { name: string; slug: string; status: string }) {
+function AgentState({ name, slug, detail }: { name: string; slug: string; detail: string }) {
   return (
     <div className="agent-state-row">
       <span className="context-agent-icon">
@@ -347,7 +356,7 @@ function AgentState({ name, slug, status }: { name: string; slug: string; status
       </span>
       <div>
         <strong>{name}</strong>
-        <p>{status}</p>
+        <p>{detail}</p>
       </div>
     </div>
   );

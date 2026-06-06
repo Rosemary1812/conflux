@@ -33,7 +33,13 @@ export async function processGroupMessage(
     throw new Error("Roster is empty. Initialize the group chat with at least 2 agents first.");
   }
 
-  const plan = await planOrchestratorRound(context, content);
+  let plan: OrchestratorPlan;
+  try {
+    plan = await planOrchestratorRound(context, content);
+  } catch (err) {
+    await handleOrchestratorError(conversationId, userMessageId, err, "plan");
+    return;
+  }
 
   if (plan.phase === "clarify") {
     await handleClarify(conversationId, userMessageId, plan, content);
@@ -115,7 +121,8 @@ async function handleClarify(
     type: "message_replace",
     messageId,
     content,
-    status: "done"
+    status: "done",
+    message: orchestratorMessage(messageId, content, "done", now + 1)
   });
 }
 
@@ -129,7 +136,13 @@ async function handleChat(
   const now = Date.now();
   const messageId = crypto.randomUUID();
 
-  const reply = await generateOrchestratorChat(context, originalContent);
+  let reply: string;
+  try {
+    reply = await generateOrchestratorChat(context, originalContent);
+  } catch (err) {
+    await handleOrchestratorError(conversationId, _userMessageId, err, "chat");
+    return;
+  }
 
   db.insert(messages)
     .values({
@@ -152,7 +165,8 @@ async function handleChat(
     type: "message_replace",
     messageId,
     content: reply,
-    status: "done"
+    status: "done",
+    message: orchestratorMessage(messageId, reply, "done", now)
   });
 }
 
@@ -182,7 +196,47 @@ async function handleValidationError(conversationId: string, userMessageId: stri
     type: "message_replace",
     messageId,
     content: `计划校验失败：${error}`,
-    status: "done"
+    status: "done",
+    message: orchestratorMessage(messageId, `计划校验失败：${error}`, "done", now)
+  });
+}
+
+async function handleOrchestratorError(
+  conversationId: string,
+  _userMessageId: string,
+  err: unknown,
+  phase: "plan" | "chat"
+) {
+  const db = getDb();
+  const now = Date.now();
+  const messageId = crypto.randomUUID();
+  const detail = err instanceof Error ? err.message : String(err);
+  const phaseLabel = phase === "plan" ? "计划" : "对话";
+  const content = `Orchestrator ${phaseLabel}阶段失败：${detail}\n\n请检查 Planner Provider 配置（base URL / API key / 模型名称）。`;
+
+  db.insert(messages)
+    .values({
+      id: messageId,
+      conversationId,
+      role: "orchestrator",
+      authorName: "Orchestrator",
+      content,
+      status: "done",
+      createdAt: now
+    })
+    .run();
+
+  db.update(conversations)
+    .set({ status: "done", updatedAt: now })
+    .where(eq(conversations.id, conversationId))
+    .run();
+
+  publishConversationEvent(conversationId, {
+    type: "message_replace",
+    messageId,
+    content,
+    status: "done",
+    message: orchestratorMessage(messageId, content, "done", now)
   });
 }
 
@@ -267,6 +321,28 @@ async function executePlan(
       })
       .run();
   }
+
+  const dispatchMessageId = crypto.randomUUID();
+  const dispatchContent = buildDispatchMessage(plan, context);
+  db.insert(messages)
+    .values({
+      id: dispatchMessageId,
+      conversationId,
+      role: "orchestrator",
+      authorName: "Orchestrator",
+      content: dispatchContent,
+      status: "done",
+      createdAt: now + 1
+    })
+    .run();
+
+  publishConversationEvent(conversationId, {
+    type: "message_replace",
+    messageId: dispatchMessageId,
+    content: dispatchContent,
+    status: "done",
+    message: orchestratorMessage(dispatchMessageId, dispatchContent, "done", now + 1)
+  });
 
   dispatchRunnableTasks(runId, conversationId, context.workspacePath);
 }
@@ -399,7 +475,8 @@ async function finalizeOrchestratorRun(runId: string) {
     type: "message_replace",
     messageId: summaryMessageId,
     content: "",
-    status: "running"
+    status: "running",
+    message: orchestratorMessage(summaryMessageId, "", "running", now)
   });
 
   const chunkSize = 50;
@@ -455,4 +532,61 @@ export function getOrchestratorRunStatus(runId: string) {
     run,
     tasks
   };
+}
+
+function buildDispatchMessage(
+  plan: OrchestratorPlan,
+  context: ReturnType<typeof buildOrchestratorContext>
+) {
+  const lines = [`我会按 ${modeLabel(plan.mode)} 分工处理：`, ""];
+
+  for (const task of plan.tasks) {
+    const member = context.roster.find((item) => item.alias === task.assigneeAlias);
+    const assignee = member ? `${member.displayName}（@${member.alias}）` : `@${task.assigneeAlias}`;
+    const dependsOn = task.dependsOn?.length ? `；依赖 ${task.dependsOn.join(", ")}` : "";
+    lines.push(`- ${assignee}：${task.description}${dependsOn}`);
+  }
+
+  return lines.join("\n");
+}
+
+function modeLabel(mode: string) {
+  switch (mode) {
+    case "single_agent":
+      return "单 Agent";
+    case "parallel_investigation":
+      return "并行调查";
+    case "compare":
+      return "并行对比";
+    case "implement_review":
+      return "实现与审查";
+    case "pipeline":
+      return "流水线";
+    default:
+      return "任务";
+  }
+}
+
+function orchestratorMessage(
+  messageId: string,
+  content: string,
+  status: "running" | "done" | "error" | "cancelled",
+  createdAt: number
+) {
+  return {
+    id: messageId,
+    author: "Orchestrator",
+    avatar: "orchestrator",
+    tone: "orchestrator" as const,
+    status,
+    time: formatMessageTime(createdAt),
+    body: content
+  };
+}
+
+function formatMessageTime(createdAt: number) {
+  return new Date(createdAt).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }

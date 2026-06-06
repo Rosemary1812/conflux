@@ -7,6 +7,7 @@ export type MentionParseResult =
 export type RosterMention = {
   agent: AgentSummary;
   alias: string;
+  displayName: string;
 };
 
 export type RosterParseResult =
@@ -58,6 +59,13 @@ export function parseAgentMentionsForRoster(content: string, agents: AgentSummar
     return { ok: false, error: `未知 Agent：@${missing.slug}` };
   }
 
+  const totalBySlug = new Map<string, number>();
+  for (const item of resolvedAgents) {
+    const agent = item.agent!;
+    const baseSlug = slugFor(agent);
+    totalBySlug.set(baseSlug, (totalBySlug.get(baseSlug) ?? 0) + 1);
+  }
+
   const slugCount = new Map<string, number>();
   const mentions: RosterMention[] = [];
 
@@ -68,7 +76,8 @@ export function parseAgentMentionsForRoster(content: string, agents: AgentSummar
     slugCount.set(baseSlug, count);
 
     const alias = count === 1 ? baseSlug : `${baseSlug}-${count}`;
-    mentions.push({ agent, alias });
+    const displayName = (totalBySlug.get(baseSlug) ?? 0) > 1 ? `${agent.name} ${count}` : agent.name;
+    mentions.push({ agent, alias, displayName });
   }
 
   return { ok: true, mentions };
@@ -79,16 +88,18 @@ export function parseAgentAliasMentions(
   rosterAliases: string[]
 ): { ok: true; aliases: string[] } | { ok: false; error: string } {
   const rawAliases = [...content.matchAll(mentionPattern)].map((match) => match[1].toLowerCase());
+  const normalizedRosterAliases = rosterAliases.map((alias) => alias.toLowerCase());
 
   if (rawAliases.length === 0) {
     return { ok: true, aliases: [] };
   }
 
-  const unknownAlias = rawAliases.find((alias) => !rosterAliases.includes(alias));
+  const unknownAlias = rawAliases.find((alias) => !normalizedRosterAliases.includes(alias));
   if (unknownAlias) {
+    const availableAliases = normalizedRosterAliases.map((alias) => `@${alias}`).join("、");
     return {
       ok: false,
-      error: `V2 暂不支持中途邀请新 Agent，请新建群聊。未知成员：@${unknownAlias}`
+      error: `@${unknownAlias} 不在当前群聊中。请使用当前群聊成员 alias：${availableAliases}`
     };
   }
 

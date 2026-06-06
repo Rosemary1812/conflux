@@ -6,6 +6,18 @@
 
 > **主线变更（2026-05-27）**：Approval 与选项交互已升格为 **V1.5 主线**（`roadmap.md` + `docs/design/ExecutePlan/V1.5-交互桥接-Approval与选项.md`）。V2 启动前须完成 V1.5；群聊 Approval UI 在 V2.4 接入。
 
+- 时间：2026-06-05
+  优先级：P1
+  所属范围：UI / API / 性能
+  问题/目标：单聊/群聊发送消息后，从点击到用户消息出现在界面、再到 Agent 开始流式回复之间存在明显空白期，感知上"反应慢"。根因是前端没有乐观更新（必须等 `POST /api/messages` 返回才渲染），且 assistant 消息缺少 loading 占位反馈。
+  解决方案：
+    1. **乐观更新用户消息**：`AppShell.sendMessage` 在 `fetch` 前先把用户消息 prepend 到本地 `messages`，并清空输入框；API 成功后替换为真实消息（含服务端生成的 id、time 等），失败则回滚。
+    2. **临时 assistant 占位**：API 返回的 `payload.messages` 中若包含 `status=running` 的 assistant 消息，前端立即渲染该消息气泡（空内容），不等待 SSE 首条 delta。
+    3. **发送按钮 loading**：`Composer` 在发送请求未返回前进入互斥 loading 状态，显示旋转动画并禁用发送按钮。
+    4. **旋转 loading 动画**：assistant 占位气泡内显示旋转 loading（不显示"正在思考"等文案），直到收到第一条 `message_delta` 或 `message_status` 变为终态。
+  涉及修改文件：`components/shell/AppShell.tsx`、`components/chat/Composer.tsx`、`components/chat/MessageBubble.tsx`、`app/globals.css`
+  验收标准：点击发送后用户消息立即出现在消息流末尾；发送按钮显示旋转 loading 且不可重复提交；assistant 空气泡同步出现并带旋转动画；SSE 首条 delta 到达后无缝追加文本；发送失败时前端消息状态正确回滚或报错；`npm run typecheck`、`npm run build` 通过。
+
 - 时间：2026-05-25 11:57
   优先级：P2
   所属范围：适配器 / QA

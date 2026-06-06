@@ -70,9 +70,10 @@ export function Composer({
 
     if (isGroup && !isNewConversation && rosterAliases && rosterAliases.length > 0) {
       const mentions = extractMentions(content);
-      const unknown = mentions.filter((m) => !rosterAliases.includes(m));
+      const normalizedRosterAliases = rosterAliases.map((alias) => alias.toLowerCase());
+      const unknown = mentions.filter((m) => !normalizedRosterAliases.includes(m));
       if (unknown.length > 0) {
-        setValidationError(`@${unknown[0]} 不在当前群聊中，请新建群聊重新添加。`);
+        setValidationError(`@${unknown[0]} 不在当前群聊中。可用 alias：${normalizedRosterAliases.map((alias) => `@${alias}`).join("、")}`);
         return;
       }
     }
@@ -250,7 +251,7 @@ export function Composer({
 
 function extractMentions(text: string): string[] {
   const matches = text.match(/@[a-zA-Z0-9_-]+/g);
-  return matches ? matches.map((m) => m.slice(1)) : [];
+  return matches ? matches.map((m) => m.slice(1).toLowerCase()) : [];
 }
 
 function formatBytes(size: number) {

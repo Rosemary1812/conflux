@@ -117,12 +117,12 @@ function migrate(database: Database.Database) {
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
       agent_id TEXT NOT NULL REFERENCES agents(id),
+      conversation_agent_id TEXT REFERENCES conversation_agents(id) ON DELETE CASCADE,
       platform TEXT NOT NULL,
       external_session_id TEXT NOT NULL,
       capabilities_json TEXT,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(conversation_id, agent_id, platform)
+      updated_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS providers (
@@ -200,9 +200,6 @@ function migrate(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS agent_interactions_conversation_status_idx
       ON agent_interactions(conversation_id, status, created_at);
 
-    CREATE INDEX IF NOT EXISTS agent_external_sessions_lookup_idx
-      ON agent_external_sessions(conversation_id, agent_id, platform);
-
     CREATE INDEX IF NOT EXISTS providers_protocol_enabled_idx
       ON providers(protocol, enabled);
 
@@ -221,6 +218,7 @@ function migrate(database: Database.Database) {
   ensureAgentRunsAwaitingInteraction(database);
   ensureProviderColumns(database);
   ensureConversationAgentsV2Migration(database);
+  ensureAgentExternalSessionsV2Migration(database);
   ensureMessagesV2Migration(database);
   ensureAgentRunsV2Column(database);
 }
@@ -388,6 +386,95 @@ function ensureMessagesV2Migration(database: Database.Database) {
     CREATE INDEX messages_conversation_created_idx ON messages(conversation_id, created_at);
 
     PRAGMA foreign_keys = ON;
+  `);
+}
+
+function ensureAgentExternalSessionsV2Migration(database: Database.Database) {
+  const columns = database
+    .prepare("PRAGMA table_info(agent_external_sessions)")
+    .all() as Array<{ name: string }>;
+  const createSql = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_external_sessions'")
+    .get() as { sql?: string } | undefined;
+  const needsRebuild =
+    !columns.some((c) => c.name === "conversation_agent_id") ||
+    Boolean(createSql?.sql?.includes("UNIQUE(conversation_id, agent_id, platform)"));
+
+  if (needsRebuild) {
+    database.exec(`
+      PRAGMA foreign_keys = OFF;
+
+      CREATE TABLE agent_external_sessions_next (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL REFERENCES agents(id),
+        conversation_agent_id TEXT REFERENCES conversation_agents(id) ON DELETE CASCADE,
+        platform TEXT NOT NULL,
+        external_session_id TEXT NOT NULL,
+        capabilities_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      INSERT INTO agent_external_sessions_next (
+        id,
+        conversation_id,
+        agent_id,
+        conversation_agent_id,
+        platform,
+        external_session_id,
+        capabilities_json,
+        created_at,
+        updated_at
+      )
+      SELECT
+        aes.id,
+        aes.conversation_id,
+        aes.agent_id,
+        CASE
+          WHEN (
+            SELECT COUNT(*)
+            FROM conversation_agents ca
+            WHERE ca.conversation_id = aes.conversation_id
+              AND ca.agent_id = aes.agent_id
+          ) = 1
+          THEN (
+            SELECT ca.id
+            FROM conversation_agents ca
+            WHERE ca.conversation_id = aes.conversation_id
+              AND ca.agent_id = aes.agent_id
+            LIMIT 1
+          )
+          ELSE NULL
+        END AS conversation_agent_id,
+        aes.platform,
+        aes.external_session_id,
+        aes.capabilities_json,
+        aes.created_at,
+        aes.updated_at
+      FROM agent_external_sessions aes;
+
+      DROP TABLE agent_external_sessions;
+      ALTER TABLE agent_external_sessions_next RENAME TO agent_external_sessions;
+
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+
+  database.exec(`
+    DROP INDEX IF EXISTS agent_external_sessions_lookup_idx;
+    DROP INDEX IF EXISTS agent_external_sessions_unique_idx;
+
+    CREATE INDEX IF NOT EXISTS agent_external_sessions_lookup_idx
+      ON agent_external_sessions(conversation_id, conversation_agent_id, agent_id, platform);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_external_sessions_instance_unique_idx
+      ON agent_external_sessions(conversation_id, conversation_agent_id, agent_id, platform)
+      WHERE conversation_agent_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_external_sessions_legacy_unique_idx
+      ON agent_external_sessions(conversation_id, agent_id, platform)
+      WHERE conversation_agent_id IS NULL;
   `);
 }
 

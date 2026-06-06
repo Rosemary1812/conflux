@@ -22,21 +22,30 @@ export function buildOrchestratorContext(conversationId: string): OrchestratorCo
   const roster: RosterMember[] = rosterRows.map((ca) => {
     const agent = db.select().from(agents).where(eq(agents.id, ca.agentId)).get();
     const adapter = agent ? getAdapter(agent.platform) : null;
+    const sameAgentRows = rosterRows.filter((row) => row.agentId === ca.agentId);
+    const displayNameSet = new Set(sameAgentRows.map((row) => row.displayName || agent?.name || row.alias));
+    const sameAgentIndex = sameAgentRows.findIndex((row) => row.id === ca.id) + 1;
+    const baseDisplayName = ca.displayName || agent?.name || ca.alias;
+    const displayName =
+      sameAgentRows.length > 1 && displayNameSet.size < sameAgentRows.length
+        ? `${agent?.name ?? baseDisplayName} ${sameAgentIndex}`
+        : baseDisplayName;
     return {
       conversationAgentId: ca.id,
       alias: ca.alias,
+      displayName,
       agent: agent
         ? {
             id: agent.id,
             slug: agent.slug,
-            name: agent.name,
+            name: displayName,
             platform: agent.platform as RosterMember["agent"]["platform"],
             description: agent.description
           }
         : {
             id: ca.agentId,
             slug: ca.alias,
-            name: ca.displayName || ca.alias,
+            name: displayName,
             platform: "claude_code" as const,
             description: ""
           },

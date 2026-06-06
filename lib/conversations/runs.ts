@@ -4,9 +4,10 @@ import path from "node:path";
 import { getAdapter } from "@/lib/adapters/registry";
 import type { AdapterAttachment, AdapterMessage, AgentEvent } from "@/lib/adapters/types";
 import { getDb } from "@/lib/db/client";
-import { agentExternalSessions, agentRuns, agents, artifacts, conversations, messages } from "@/lib/db/schema";
+import { agentExternalSessions, agentRuns, agents, artifacts, conversationAgents, conversations, messages } from "@/lib/db/schema";
 import { publishConversationEvent } from "@/lib/conversations/stream-bus";
 import type { AgentSummary } from "@/lib/agents/types";
+import { slugFor } from "@/lib/agents/mention";
 import { cancelPendingRunInteractions, createInteraction } from "@/lib/interactions/service";
 import { waitForInteractionResponse } from "@/lib/interactions/run-bridge";
 import type { PendingAgentInteraction } from "@/lib/interactions/types";
@@ -57,6 +58,7 @@ export function startAgentRun({
   const assistantMessageId = crypto.randomUUID();
   const controller = new AbortController();
   const db = getDb();
+  const initialContent = taskPrompt ? `<任务>\n${taskPrompt}\n</任务>\n\n` : "";
 
   db.insert(agentRuns)
     .values({
@@ -80,7 +82,7 @@ export function startAgentRun({
       agentId: agent.id,
       authorConversationAgentId: conversationAgentId ?? null,
       orchestratorTaskId: orchestratorTaskId ?? null,
-      content: taskPrompt ? `<任务>\n${taskPrompt}\n</任务>\n\n` : "",
+      content: initialContent,
       status: "running",
       createdAt: now + 1
     })
@@ -92,6 +94,22 @@ export function startAgentRun({
     .run();
 
   activeRuns.set(runId, controller);
+  publishConversationEvent(conversationId, {
+    type: "message_replace",
+    messageId: assistantMessageId,
+    content: initialContent,
+    status: "running",
+    message: {
+      id: assistantMessageId,
+      author: agent.name,
+      avatar: slugFor(agent),
+      tone: "agent",
+      status: "running",
+      time: formatMessageTime(now + 1),
+      body: initialContent,
+      authorConversationAgentId: conversationAgentId
+    }
+  });
   publishConversationEvent(conversationId, { type: "run_status", runId, status: "running" });
 
   void drainAgentRun({
@@ -167,7 +185,7 @@ async function drainAgentRun({
   const beforeSnapshot = snapshotWorkspace(workspacePath);
 
   try {
-    const externalSession = getExternalSession(conversationId, agent.id, agent.platform);
+    const externalSession = getExternalSession(conversationId, agent.id, agent.platform, conversationAgentId);
 
     for await (const event of adapter.run({
       runId,
@@ -195,6 +213,7 @@ async function drainAgentRun({
         saveExternalSession({
           conversationId,
           agentId: agent.id,
+          conversationAgentId,
           platform: agent.platform,
           externalSessionId: sessionId,
           capabilities
@@ -231,8 +250,13 @@ async function drainAgentRun({
   }
 }
 
-function getExternalSession(conversationId: string, agentId: string, platform: string) {
-  return getDb()
+function getExternalSession(
+  conversationId: string,
+  agentId: string,
+  platform: string,
+  conversationAgentId?: string
+) {
+  const sessions = getDb()
     .select()
     .from(agentExternalSessions)
     .where(
@@ -242,49 +266,96 @@ function getExternalSession(conversationId: string, agentId: string, platform: s
         eq(agentExternalSessions.platform, platform)
       )
     )
-    .get();
+    .all();
+
+  if (conversationAgentId) {
+    const exactSession = sessions.find((session) => session.conversationAgentId === conversationAgentId);
+
+    if (exactSession) {
+      return exactSession;
+    }
+
+    if (!canUseLegacyExternalSession(conversationId, agentId)) {
+      return undefined;
+    }
+  }
+
+  return sessions.find((session) => !session.conversationAgentId);
 }
 
 function saveExternalSession({
   conversationId,
   agentId,
+  conversationAgentId,
   platform,
   externalSessionId,
   capabilities
 }: {
   conversationId: string;
   agentId: string;
+  conversationAgentId?: string;
   platform: string;
   externalSessionId: string;
   capabilities?: Record<string, unknown>;
 }) {
   const now = Date.now();
+  const db = getDb();
+  const sessions = db
+    .select()
+    .from(agentExternalSessions)
+    .where(
+      and(
+        eq(agentExternalSessions.conversationId, conversationId),
+        eq(agentExternalSessions.agentId, agentId),
+        eq(agentExternalSessions.platform, platform)
+      )
+    )
+    .all();
+  const existing = conversationAgentId
+    ? sessions.find((session) => session.conversationAgentId === conversationAgentId)
+    : sessions.find((session) => !session.conversationAgentId);
 
-  getDb()
+  if (existing) {
+    db.update(agentExternalSessions)
+      .set({
+        externalSessionId,
+        capabilitiesJson: capabilities ? JSON.stringify(capabilities) : null,
+        updatedAt: now
+      })
+      .where(eq(agentExternalSessions.id, existing.id))
+      .run();
+    return;
+  }
+
+  db
     .insert(agentExternalSessions)
     .values({
       id: crypto.randomUUID(),
       conversationId,
       agentId,
+      conversationAgentId: conversationAgentId ?? null,
       platform,
       externalSessionId,
       capabilitiesJson: capabilities ? JSON.stringify(capabilities) : null,
       createdAt: now,
       updatedAt: now
     })
-    .onConflictDoUpdate({
-      target: [
-        agentExternalSessions.conversationId,
-        agentExternalSessions.agentId,
-        agentExternalSessions.platform
-      ],
-      set: {
-        externalSessionId,
-        capabilitiesJson: capabilities ? JSON.stringify(capabilities) : null,
-        updatedAt: now
-      }
-    })
     .run();
+}
+
+function canUseLegacyExternalSession(conversationId: string, agentId: string) {
+  const matchingConversationAgents = getDb()
+    .select({ id: conversationAgents.id })
+    .from(conversationAgents)
+    .where(
+      and(
+        eq(conversationAgents.conversationId, conversationId),
+        eq(conversationAgents.agentId, agentId)
+      )
+    )
+    .all();
+
+  return matchingConversationAgents.length <= 1;
 }
 
 async function handleAgentEvent({
@@ -692,4 +763,11 @@ function markRunCancelled(conversationId: string, runId: string, messageId?: str
 function isRunActive(runId: string) {
   const run = getDb().select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
   return run?.status === "running" || run?.status === "pending" || run?.status === "awaiting_interaction";
+}
+
+function formatMessageTime(createdAt: number) {
+  return new Date(createdAt).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }

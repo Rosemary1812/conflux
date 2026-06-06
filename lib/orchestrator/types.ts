@@ -30,6 +30,7 @@ export type OrchestratorPlan = {
 export type RosterMember = {
   conversationAgentId: string;
   alias: string;
+  displayName: string;
   agent: AgentSummary;
   capabilities: AdapterCapabilities;
   status: string;

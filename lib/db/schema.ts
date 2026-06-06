@@ -173,6 +173,7 @@ export const agentExternalSessions = sqliteTable(
     agentId: text("agent_id")
       .notNull()
       .references(() => agents.id),
+    conversationAgentId: text("conversation_agent_id").references(() => conversationAgents.id, { onDelete: "cascade" }),
     platform: text("platform").notNull(),
     externalSessionId: text("external_session_id").notNull(),
     capabilitiesJson: text("capabilities_json"),
@@ -180,8 +181,9 @@ export const agentExternalSessions = sqliteTable(
     updatedAt: integer("updated_at").notNull()
   },
   (table) => ({
-    externalSessionIdx: uniqueIndex("agent_external_sessions_unique_idx").on(
+    externalSessionIdx: index("agent_external_sessions_lookup_idx").on(
       table.conversationId,
+      table.conversationAgentId,
       table.agentId,
       table.platform
     )

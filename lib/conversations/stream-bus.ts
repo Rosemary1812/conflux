@@ -1,4 +1,5 @@
 import type { AgentInteraction, InteractionDecision, InteractionStatus } from "@/lib/interactions/types";
+import type { MockMessage } from "@/lib/conversations/types";
 
 export type ConversationStreamEvent =
   | {
@@ -6,6 +7,7 @@ export type ConversationStreamEvent =
       messageId: string;
       content: string;
       status: "running" | "done" | "error" | "cancelled";
+      message?: MockMessage;
     }
   | {
       type: "message_delta";

@@ -339,11 +339,13 @@ function sendSingleMessage(
   const messageId = crypto.randomUUID();
 
   const db = getDb();
+  let lockedConversationAgentId: string | undefined;
 
   if (!existingLock) {
+    lockedConversationAgentId = crypto.randomUUID();
     db.insert(conversationAgents)
       .values({
-        id: crypto.randomUUID(),
+        id: lockedConversationAgentId,
         conversationId: conversation.id,
         agentId: selectedAgent.id,
         alias: slugFor(selectedAgent),
@@ -387,25 +389,25 @@ function sendSingleMessage(
     .where(eq(conversations.id, conversation.id))
     .run();
 
-  const lockedConversationAgent = existingLock
-    ? db
-        .select()
-        .from(conversationAgents)
-        .where(
-          and(
-            eq(conversationAgents.conversationId, conversation.id),
-            eq(conversationAgents.role, "primary")
-          )
+  if (existingLock) {
+    lockedConversationAgentId = db
+      .select({ id: conversationAgents.id })
+      .from(conversationAgents)
+      .where(
+        and(
+          eq(conversationAgents.conversationId, conversation.id),
+          eq(conversationAgents.role, "primary")
         )
-        .get()
-    : null;
+      )
+      .get()?.id;
+  }
 
   const run = startAgentRun({
     conversationId: conversation.id,
     agent: selectedAgent,
     workspacePath: conversation.workspacePath,
     attachments: storedAttachments.map(toAdapterAttachment),
-    conversationAgentId: lockedConversationAgent?.id
+    conversationAgentId: lockedConversationAgentId
   });
 
   return {
@@ -450,7 +452,7 @@ function sendGroupMessage(
           conversationId: conversation.id,
           agentId: mention.agent.id,
           alias: mention.alias,
-          displayName: mention.agent.name,
+          displayName: mention.displayName,
           role: "member",
           status: "active",
           joinedAt: now,
@@ -813,20 +815,34 @@ export function getConversationRoster(conversationId: string) {
       alias: conversationAgents.alias,
       displayName: conversationAgents.displayName,
       status: conversationAgents.status,
-      slug: agents.slug
+      slug: agents.slug,
+      name: agents.name
     })
     .from(conversationAgents)
     .innerJoin(agents, eq(conversationAgents.agentId, agents.id))
     .where(eq(conversationAgents.conversationId, conversationId))
     .orderBy(conversationAgents.joinedAt)
     .all()
-    .map((row) => ({
-      id: row.id,
-      alias: row.alias,
-      displayName: row.displayName ?? row.alias,
-      status: row.status as "active" | "idle" | "running" | "unavailable",
-      slug: row.slug
-    }));
+    .map((row, _index, rows) => {
+      const currentDisplayName = row.displayName ?? row.name ?? row.alias;
+      const sameSlugRows = rows.filter((candidate) => candidate.slug === row.slug);
+      const displayNameSet = new Set(
+        sameSlugRows.map((candidate) => candidate.displayName ?? candidate.name ?? candidate.alias)
+      );
+      const sameSlugIndex = sameSlugRows.findIndex((candidate) => candidate.id === row.id) + 1;
+      const displayName =
+        sameSlugRows.length > 1 && displayNameSet.size < sameSlugRows.length
+          ? `${row.name ?? currentDisplayName} ${sameSlugIndex}`
+          : currentDisplayName;
+
+      return {
+        id: row.id,
+        alias: row.alias,
+        displayName,
+        status: row.status as "active" | "idle" | "running" | "unavailable",
+        slug: row.slug
+      };
+    });
 }
 
 function getMessageAttachments(messageId: string) {

@@ -77,11 +77,7 @@ export function AppShell() {
       }
 
       setMessages((current) =>
-        current.map((message) =>
-          message.id === payload.messageId
-            ? { ...message, body: payload.content, status: payload.status }
-            : message
-        )
+        mergeMessageReplace(current, payload)
       );
     });
 
@@ -388,6 +384,9 @@ export function AppShell() {
       setActiveConversationId(payload.conversation.id);
       setDraftWorkspacePath(payload.conversation.workspacePath);
       setView(isGroup ? "group" : "single");
+      if (payload.conversation.mode === "group") {
+        void loadRoster(payload.conversation.id);
+      }
       return true;
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "发送消息失败。");
@@ -744,4 +743,31 @@ function attachInteractions(messages: MockMessage[], interactions: AgentInteract
       interactions: messageInteractions
     };
   });
+}
+
+function mergeMessageReplace(messages: MockMessage[], payload: Extract<ConversationStreamEvent, { type: "message_replace" }>) {
+  const existing = messages.some((message) => message.id === payload.messageId);
+
+  if (existing) {
+    return messages.map((message) =>
+      message.id === payload.messageId ? { ...message, body: payload.content, status: payload.status } : message
+    );
+  }
+
+  if (payload.message) {
+    return [...messages, payload.message];
+  }
+
+  return [
+    ...messages,
+    {
+      id: payload.messageId,
+      author: "Orchestrator",
+      avatar: "orchestrator",
+      tone: "orchestrator" as const,
+      status: payload.status,
+      time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+      body: payload.content
+    }
+  ];
 }

@@ -45,9 +45,7 @@ export function invokeAgentForTask({
   };
 
   const context = buildTaskContext(task, 2000);
-  const taskPrompt = context
-    ? `<上下文>\n${context}\n</上下文>\n\n<任务>\n${task.description}\n</任务>`
-    : task.description;
+  const taskPrompt = buildSubAgentPrompt(task.description, context);
 
   const run = startAgentRun({
     conversationId,
@@ -60,4 +58,16 @@ export function invokeAgentForTask({
   });
 
   return { runId: run.runId, messageId: run.assistantMessageId };
+}
+
+function buildSubAgentPrompt(taskDescription: string, context: string) {
+  return [
+    "<角色边界>",
+    "你是 AgentHub 群聊中被 Orchestrator 分派的子 Agent，不是 Orchestrator。",
+    "只执行当前任务，不要继续拆分任务、不要声明会启动或调度其他 Agent。",
+    "如果任务需要用户确认或选择，使用 AgentHub 的 Approval / Choice 交互机制。",
+    "</角色边界>",
+    context ? `<上下文>\n${context}\n</上下文>` : "",
+    `<任务>\n${taskDescription}\n</任务>`
+  ].filter(Boolean).join("\n\n");
 }

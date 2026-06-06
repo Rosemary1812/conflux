@@ -22,6 +22,27 @@
 
 ## 已做
 
+- 时间：2026-06-06
+  优先级：P1
+  所属范围：DB / 迁移
+  问题/目标：项目在 8080 打开后 `/api/conversations` 立刻 500，dev.log 报 `SqliteError: no such column: conversation_agent_id`，根因是 `lib/db/client.ts` 的迁移鸡生蛋 bug——`migrate()` 大 `database.exec()` 块里同时塞了 `CREATE TABLE IF NOT EXISTS agent_external_sessions(...)`（带新列）与 `CREATE UNIQUE INDEX ... ON agent_external_sessions(...) WHERE conversation_agent_id IS [NOT] NULL`；在旧 DB（`agent_external_sessions` 表已存在但没有 `conversation_agent_id` 列）上，前者是 no-op、后者报"no such column"，整个 exec 抛错，紧跟其后的 `ensureAgentExternalSessionsV2Migration()`（本应重建该表并加列）根本没机会跑；同会话 `agent_runs` 已是新 schema（说明更早一轮迁移成功过），DB 处于"半迁移"状态。
+  解决方案：把 `lib/db/client.ts:203-212` 的三条 `agent_external_sessions_*` 索引 DDL（`lookup_idx` + `instance_unique_idx` + `legacy_unique_idx`）从大 `database.exec()` 块里删除；它们已经在 `ensureAgentExternalSessionsV2Migration()` 末尾的 `database.exec()` 里 DROP + 重建（`client.ts:475-489`），属于幂等操作。旧 DB 流程变为：大 exec 不再因引用新列的索引而抛错 → ensure 函数检测到 `agent_external_sessions` 没有 `conversation_agent_id` 列 → 重建表 → 重建全部索引。**不彻底**：schema DDL 仍分散在大 exec 与 ensure 函数两处，未来再加新列/索引时容易再撞同一个雷，根本方案是统一收口（见本条**遗留**）。
+  涉及修改文件：`lib/db/client.ts`
+  验收标准：访问 `http://localhost:8080` 后，任意会话列表/创建 API 不再返回 500；`data/agenthub.sqlite` 中 `agent_external_sessions` 表拥有 `conversation_agent_id` 列；3 个 `agent_external_sessions_*` 索引均存在；旧会话数据不丢失；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-06-06
+  验证结果：编辑后 Next dev 热重载会拿到新 `migrate()`；由于前次 `migrate()` 抛错 `initialized` 永为 `false`，下一次 `getDb()` 会重试迁移。`git diff --stat` 确认仅 `lib/db/client.ts` 单文件变动 7 行。**本轮未在浏览器实际触发 `/api/conversations` 验证 200**，请在浏览器刷新首页或 `curl http://localhost:8080/api/conversations` 确认；如仍有 500，请把 dev.log 末尾新错误贴出来。
+  遗留：大 `database.exec()` 块仍是"新装 DB 的最小 DDL + 假设列已存在"混合体，与 ensure 函数职责重叠。彻底方案是把所有"依赖新列的 DDL"全部从大 exec 抽离到 ensure 函数，或迁移到 drizzle-kit / Prisma migrate 等按版本号顺序的工具。
+
+- 时间：2026-06-06
+  优先级：P1
+  所属范围：Orchestrator / 群聊 / UI / 适配器
+  问题/目标：群聊中重复 @ 同一个 Claude Code 后，虽然数据层会生成 `claude-code` 与 `claude-code-2` 两个实例，但运行体验仍未完全按 `conversation_agent_id` 隔离：Orchestrator 分工说明缺失、同类型实例展示不可区分、群聊成员 alias 寻址不清楚、外部 Claude session 可能共享/覆盖、子 Agent 角色约束不足。
+  解决方案：按 `docs/design/ExecutePlan/2026-06-06-群聊同类型多实例隔离修复计划.md` 分阶段修复：同类型 roster 生成 `Claude Code 1` / `Claude Code 2` 展示名；Orchestrator 在 dispatch 前插入分工消息；前端支持 SSE 插入服务端新消息；`agent_external_sessions` 增加 `conversation_agent_id` 并按实例保存/读取外部 session；子 Agent task prompt 增加“只执行被分派任务，不扮演 Orchestrator”的角色约束。
+  涉及修改文件：`lib/orchestrator/service.ts`、`lib/orchestrator/invoker.ts`、`lib/orchestrator/context.ts`、`lib/conversations/service.ts`、`lib/conversations/runs.ts`、`lib/agents/mention.ts`、`lib/db/schema.ts`、`lib/db/client.ts`、`lib/conversations/stream-bus.ts`、`components/shell/AppShell.tsx`、`components/chat/Composer.tsx`、`components/context/ContextPanel.tsx`
+  验收标准：新建群聊发送 `@claude @claude ...` 后，消息流顺序为用户消息 → Orchestrator 分工说明 → `Claude Code 1` / `Claude Code 2` 子 Agent 进度/结果 → Orchestrator 汇总；气泡、右栏参与上下文、任务分派均能区分两个实例；后续可用明确 alias @ 到指定成员且不报“不在当前群聊”；两个 Claude Code 实例的 external session 不互相覆盖；子 Agent 回复只围绕分派任务，不再声明自己要启动新的并行 Agent；`npm run typecheck`、`npm run build` 通过。
+  完成时间：2026-06-06 22:28
+  验证结果：`npm run typecheck`、`npm run build`、`git diff --check` 通过；本轮未运行真实 Claude Code 端到端 smoke，真实外部 Agent 行为仍建议在可用 Provider/CLI 环境下补一次人工验收。
+
 - 时间：2026-05-30
   优先级：P2
   所属范围：适配器 / Provider

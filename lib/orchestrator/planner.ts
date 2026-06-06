@@ -42,7 +42,7 @@ Rules:
 function buildPlannerPrompt(context: OrchestratorContext, content: string): string {
   const rosterText = context.roster
     .map(
-      (r) => `  - ${r.alias} (${r.agent.name})
+      (r) => `  - ${r.alias} (${r.displayName})
     capabilities: approval=${r.capabilities.supportsApproval}, choice=${r.capabilities.supportsChoice}
     status: ${r.status}`
     )
@@ -299,7 +299,7 @@ export async function generateOrchestratorChat(context: OrchestratorContext, con
 
   const apiKey = Buffer.from(provider.apiKeyEncrypted, "base64").toString("utf8");
 
-  const rosterText = context.roster.map((r) => `  - ${r.alias} (${r.agent.name})`).join("\n");
+  const rosterText = context.roster.map((r) => `  - ${r.alias} (${r.displayName})`).join("\n");
 
   const historyText = context.history
     .slice(-20)
