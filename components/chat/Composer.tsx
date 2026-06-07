@@ -1,8 +1,29 @@
 "use client";
 
 import { ArrowUp, FileUp, FolderGit2, ImagePlus, Loader2, Square, X } from "lucide-react";
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { SlashCommandPanel } from "@/components/chat/SlashCommandPanel";
 import type { AttachmentReference } from "@/lib/conversations/types";
+import type { SkillSummary } from "@/lib/skills/types";
+
+const builtinSkills: SkillSummary[] = [
+  {
+    id: "skill_agent_creator",
+    slug: "agent-creator",
+    name: "Agent Creator",
+    description: "Create a custom Agent through a guided conversation.",
+    kind: "built-in",
+    version: 1
+  },
+  {
+    id: "skill_skill_creator",
+    slug: "skill-creator",
+    name: "Skill Creator",
+    description: "Create a reusable slash-command Skill.",
+    kind: "built-in",
+    version: 1
+  }
+];
 
 type ComposerProps = {
   disabled: boolean;
@@ -12,7 +33,7 @@ type ComposerProps = {
   isRunning: boolean;
   rosterAliases?: string[];
   workspacePath?: string;
-  onSend: (content: string, attachments?: AttachmentReference[]) => Promise<boolean>;
+  onSend: (content: string, attachments?: AttachmentReference[], skillSlug?: string) => Promise<boolean>;
   onStop: () => Promise<void>;
   onWorkspaceSelect?: () => Promise<void>;
 };
@@ -32,6 +53,8 @@ export function Composer({
   const [content, setContent] = useState("");
   const [attachments, setAttachments] = useState<AttachmentReference[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [skills, setSkills] = useState<SkillSummary[]>(builtinSkills);
+  const [activeSkillIndex, setActiveSkillIndex] = useState(0);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isSelectingWorkspace, setIsSelectingWorkspace] = useState(false);
@@ -45,6 +68,41 @@ export function Composer({
     : isNewConversation
       ? "@claude-code 帮我 review 当前分支改动"
       : "继续补测试、帮我 review 这段代码，或整理当前产物到工作区";
+  const slashQuery = getSlashQuery(content);
+  const matchingSkills = useMemo(() => {
+    if (isGroup || slashQuery === null) {
+      return [];
+    }
+
+    return skills.filter((skill) => skill.slug.includes(slashQuery.toLowerCase()));
+  }, [content, isGroup, skills, slashQuery]);
+  const showSlashPanel = !isGroup && slashQuery !== null && matchingSkills.length > 0;
+
+  useEffect(() => {
+    if (isGroup || slashQuery === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadSkills() {
+      const response = await fetch("/api/skills");
+      const payload = (await response.json()) as { skills?: SkillSummary[] };
+
+      if (!cancelled && response.ok) {
+        setSkills(payload.skills ?? []);
+      }
+    }
+
+    void loadSkills();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGroup, slashQuery]);
+
+  useEffect(() => {
+    setActiveSkillIndex(0);
+  }, [slashQuery]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -78,7 +136,10 @@ export function Composer({
       }
     }
 
-    const sentContent = content;
+    const originalContent = content;
+    const selectedSkill = !isGroup ? parseKnownSkillCommand(content, skills) : null;
+    const sentContent = selectedSkill ? selectedSkill.input : content;
+    const sentSkillSlug = selectedSkill?.slug;
     const sentAttachments = attachments;
     setIsSending(true);
     contentRef.current = "";
@@ -87,12 +148,12 @@ export function Composer({
     setAttachments([]);
 
     try {
-      const sent = await onSend(sentContent, sentAttachments);
+      const sent = await onSend(sentContent, sentAttachments, sentSkillSlug);
 
       if (!sent && contentRef.current === "" && attachmentsRef.current.length === 0) {
-        contentRef.current = sentContent;
+        contentRef.current = originalContent;
         attachmentsRef.current = sentAttachments;
-        setContent(sentContent);
+        setContent(originalContent);
         setAttachments(sentAttachments);
       }
     } finally {
@@ -173,6 +234,13 @@ export function Composer({
         </span>
       </div>
       <form className="composer-shell" onSubmit={handleSubmit}>
+        {showSlashPanel ? (
+          <SlashCommandPanel
+            activeIndex={Math.min(activeSkillIndex, matchingSkills.length - 1)}
+            skills={matchingSkills}
+            onSelect={selectSkill}
+          />
+        ) : null}
         {attachments.length > 0 ? (
           <div className="attachment-preview-list">
             {attachments.map((attachment, index) => (
@@ -196,6 +264,33 @@ export function Composer({
             }
           }}
           onKeyDown={(event) => {
+            if (showSlashPanel) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setActiveSkillIndex((index) => (index + 1) % matchingSkills.length);
+                return;
+              }
+
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setActiveSkillIndex((index) => (index - 1 + matchingSkills.length) % matchingSkills.length);
+                return;
+              }
+
+              if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+                event.preventDefault();
+                selectSkill(matchingSkills[Math.min(activeSkillIndex, matchingSkills.length - 1)]);
+                return;
+              }
+
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setContent("");
+                contentRef.current = "";
+                return;
+              }
+            }
+
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
               event.currentTarget.form?.requestSubmit();
             }
@@ -247,6 +342,38 @@ export function Composer({
       </form>
     </div>
   );
+
+  function selectSkill(skill: SkillSummary) {
+    const rest = content.replace(/^\/[^\s]*\s*/, "");
+    const nextContent = `/${skill.slug}${rest ? ` ${rest}` : " "}`;
+    contentRef.current = nextContent;
+    setContent(nextContent);
+    setActiveSkillIndex(0);
+  }
+}
+
+function getSlashQuery(text: string) {
+  const match = text.match(/^\/([a-zA-Z0-9_-]*)$/);
+  return match ? match[1] : null;
+}
+
+function parseKnownSkillCommand(text: string, skills: SkillSummary[]) {
+  const match = text.trimStart().match(/^\/([a-zA-Z0-9_-]+)(?:\s+([\s\S]*))?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const slug = match[1];
+
+  if (!skills.some((skill) => skill.slug === slug)) {
+    return null;
+  }
+
+  return {
+    slug,
+    input: match[2]?.trim() ?? ""
+  };
 }
 
 function extractMentions(text: string): string[] {

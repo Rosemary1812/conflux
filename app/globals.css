@@ -1324,12 +1324,70 @@ pre {
 }
 
 .composer-shell {
+  position: relative;
   width: min(100%, var(--chat-max-width));
   border: 1px solid var(--border);
   border-radius: 18px;
   background: var(--bg-panel);
   box-shadow: var(--shadow-md);
   padding: 14px;
+}
+
+.slash-panel {
+  position: absolute;
+  right: 14px;
+  bottom: calc(100% + 8px);
+  left: 14px;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 20;
+}
+
+.slash-option {
+  display: grid;
+  grid-template-columns: minmax(132px, 0.34fr) 1fr;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.slash-option:hover,
+.slash-option.active {
+  background: var(--bg-shell-hover);
+}
+
+.slash-command {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.slash-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.slash-copy strong {
+  font-size: 13px;
+}
+
+.slash-copy small {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .attachment-preview-list {

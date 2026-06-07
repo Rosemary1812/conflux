@@ -16,6 +16,8 @@ import { startAgentRun } from "@/lib/conversations/runs";
 import { processGroupMessage } from "@/lib/orchestrator/service";
 import { invokeAgentForTask } from "@/lib/orchestrator/invoker";
 import type { OrchestratorTaskRecord } from "@/lib/orchestrator/types";
+import { getSkillBySlug } from "@/lib/skills/registry";
+import { runSkill } from "@/lib/skills/runner";
 
 type ConversationRow = typeof conversations.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
@@ -320,14 +322,23 @@ export type IncomingAttachment = {
   allowExternal?: boolean;
 };
 
-export function sendMessage(conversationId: string, content: string, incomingAttachments: IncomingAttachment[] = []) {
+export function sendMessage(
+  conversationId: string,
+  content: string,
+  incomingAttachments: IncomingAttachment[] = [],
+  options: { skillSlug?: string } = {}
+) {
   const trimmed = content.trim();
 
-  if (!trimmed && incomingAttachments.length === 0) {
+  if (!trimmed && incomingAttachments.length === 0 && !options.skillSlug) {
     throw new ApiError("消息不能为空。", 400);
   }
 
   const conversation = ensureConversation(conversationId);
+
+  if (conversation.mode === "group" && !trimmed && incomingAttachments.length === 0) {
+    throw new ApiError("消息不能为空。", 400);
+  }
 
   if (!conversation.workspacePath) {
     throw new ApiError("未选择工作区，不能发送消息。", 400);
@@ -337,7 +348,71 @@ export function sendMessage(conversationId: string, content: string, incomingAtt
     return sendGroupMessage(conversation, trimmed, incomingAttachments);
   }
 
+  if (options.skillSlug) {
+    return sendSkillCommand(conversation, options.skillSlug, trimmed, incomingAttachments);
+  }
+
   return sendSingleMessage(conversation, trimmed, incomingAttachments);
+}
+
+function sendSkillCommand(
+  conversation: typeof conversations.$inferSelect,
+  skillSlug: string,
+  trimmed: string,
+  incomingAttachments: IncomingAttachment[]
+) {
+  const skill = getSkillBySlug(skillSlug);
+
+  if (!skill) {
+    throw new ApiError("未知斜杠命令。", 400);
+  }
+
+  const now = Date.now();
+  const messageId = crypto.randomUUID();
+  const displayContent = trimmed || `/${skillSlug}`;
+  const db = getDb();
+
+  db.insert(messages)
+    .values({
+      id: messageId,
+      conversationId: conversation.id,
+      role: "user",
+      authorName: "你",
+      content: displayContent,
+      status: "done",
+      createdAt: now
+    })
+    .run();
+
+  storeMessageAttachments({
+    conversationId: conversation.id,
+    messageId,
+    attachments: incomingAttachments,
+    workspacePath: conversation.workspacePath,
+    now
+  });
+
+  db.update(conversations)
+    .set({
+      title: conversation.title === "新建聊天" ? titleFromMessage(displayContent) : conversation.title,
+      status: "running",
+      updatedAt: now
+    })
+    .where(eq(conversations.id, conversation.id))
+    .run();
+
+  runSkill({
+    slug: skillSlug,
+    conversationId: conversation.id,
+    userMessageId: messageId,
+    input: trimmed
+  });
+
+  return {
+    conversation: getConversation(conversation.id),
+    messages: listMessages(conversation.id),
+    run: null
+  };
 }
 
 function sendSingleMessage(

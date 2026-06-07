@@ -330,7 +330,7 @@ export function AppShell() {
     setView("new-single");
   }
 
-  async function sendMessage(content: string, attachments: AttachmentReference[] = []) {
+  async function sendMessage(content: string, attachments: AttachmentReference[] = [], skillSlug?: string) {
     setError(null);
 
     try {
@@ -362,7 +362,7 @@ export function AppShell() {
       const response = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId, content, attachments })
+        body: JSON.stringify({ conversationId, content, attachments, skillSlug: isGroup ? undefined : skillSlug })
       });
       const payload = (await response.json()) as {
         conversation?: ConversationSummary;

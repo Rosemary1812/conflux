@@ -9,15 +9,17 @@ export async function POST(request: Request) {
       conversationId?: string;
       content?: string;
       attachments?: IncomingAttachment[];
+      skillSlug?: string;
     };
 
     if (!body.conversationId) {
       throw new ApiError("缺少 conversationId。", 400);
     }
 
-    return NextResponse.json(sendMessage(body.conversationId, body.content ?? "", body.attachments ?? []), {
-      status: 201
-    });
+    return NextResponse.json(
+      sendMessage(body.conversationId, body.content ?? "", body.attachments ?? [], { skillSlug: body.skillSlug }),
+      { status: 201 }
+    );
   } catch (error) {
     return toErrorResponse(error);
   }
