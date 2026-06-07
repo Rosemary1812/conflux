@@ -837,6 +837,59 @@ pre {
   background: rgba(47, 111, 237, 0.05);
 }
 
+.interaction-card.agent-creator-preview {
+  border-color: rgba(124, 79, 226, 0.32);
+  background: rgba(124, 79, 226, 0.06);
+}
+
+.agent-creator-prompt {
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.agent-creator-danger-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(184, 60, 60, 0.16);
+  color: #b83c3c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agent-creator-danger-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(184, 60, 60, 0.08);
+  color: var(--text-1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-creator-danger-confirm input {
+  margin-top: 2px;
+}
+
+.agent-creator-error {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(184, 60, 60, 0.1);
+  color: #b83c3c;
+  font-size: 12px;
+}
+
 .interaction-header {
   display: grid;
   gap: 3px;

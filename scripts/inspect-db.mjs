@@ -72,6 +72,29 @@ seedSkill.run({
   now
 });
 
+const seedAgent = db.prepare(`
+  INSERT INTO agents (id, slug, name, platform, description, enabled, is_system, system_prompt, capabilities, avatar_kind, avatar_value, permission_mode, tool_profile, created_at, updated_at)
+  VALUES (@id, @slug, @name, @platform, @description, 1, 1, '', NULL, 'system', @slug, 'readonly', NULL, @now, @now)
+  ON CONFLICT(slug) DO UPDATE SET
+    name = excluded.name,
+    platform = excluded.platform,
+    description = excluded.description,
+    enabled = 1,
+    is_system = 1,
+    avatar_kind = 'system',
+    avatar_value = excluded.slug,
+    updated_at = excluded.updated_at
+`);
+
+seedAgent.run({
+  id: "agent_creator_system",
+  slug: "agent-creator",
+  name: "Agent Creator",
+  platform: "claude_code",
+  description: "Conflux built-in /agent-creator workflow. Carries Choice cards for the guided Agent creation flow.",
+  now
+});
+
 for (const table of ["agents", "skills", "agent_skills"]) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all();
   const exists = columns.length > 0;
@@ -87,6 +110,13 @@ for (const table of ["agents", "skills", "agent_skills"]) {
 
 console.log("\n[built-in skills]");
 console.table(db.prepare("SELECT slug, kind, version FROM skills WHERE kind = 'built-in' ORDER BY slug").all());
+
+console.log("\n[built-in system agents]");
+console.table(
+  db
+    .prepare("SELECT slug, name, platform, is_system FROM agents WHERE is_system = 1 ORDER BY slug")
+    .all()
+);
 
 db.close();
 

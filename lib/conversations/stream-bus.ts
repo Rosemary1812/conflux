@@ -1,5 +1,6 @@
 import type { AgentInteraction, InteractionDecision, InteractionStatus } from "@/lib/interactions/types";
 import type { MockMessage } from "@/lib/conversations/types";
+import type { AgentDraft } from "@/lib/skills/agent-creator/types";
 
 export type ConversationStreamEvent =
   | {
@@ -60,6 +61,13 @@ export type ConversationStreamEvent =
       type: "orchestrator_summary";
       runId: string;
       messageId: string;
+    }
+  | {
+      type: "agent_creator_session";
+      conversationId: string;
+      state: "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled";
+      draft: Partial<AgentDraft> | null;
+      lastSummary: string;
     };
 
 type Listener = (event: ConversationStreamEvent) => void;

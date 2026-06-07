@@ -3,6 +3,9 @@ import { eq } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { agents, skills } from "@/lib/db/schema";
 
+export const AGENT_CREATOR_SYSTEM_AGENT_ID = "agent_creator_system";
+export const AGENT_CREATOR_SYSTEM_AGENT_SLUG = "agent-creator";
+
 const builtinAgents = [
   {
     id: "agent_claude_code",
@@ -31,6 +34,13 @@ const builtinAgents = [
     name: "OpenCode",
     platform: "opencode",
     description: "OpenCode CLI adapter for V1 single-chat execution."
+  },
+  {
+    id: AGENT_CREATOR_SYSTEM_AGENT_ID,
+    slug: AGENT_CREATOR_SYSTEM_AGENT_SLUG,
+    name: "Agent Creator",
+    platform: "claude_code",
+    description: "Conflux built-in /agent-creator workflow. Carries Choice cards for the guided Agent creation flow."
   }
 ] as const;
 
@@ -55,6 +65,8 @@ export function seedAgents(db: BetterSQLite3Database<typeof schema>) {
   const now = Date.now();
 
   for (const agent of builtinAgents) {
+    const avatarKind = agent.id === AGENT_CREATOR_SYSTEM_AGENT_ID ? "system" : "system";
+    const avatarValue = agent.slug;
     db.insert(agents)
       .values({
         ...agent,
@@ -62,8 +74,8 @@ export function seedAgents(db: BetterSQLite3Database<typeof schema>) {
         isSystem: true,
         systemPrompt: "",
         capabilities: null,
-        avatarKind: "system",
-        avatarValue: agent.slug,
+        avatarKind,
+        avatarValue,
         permissionMode: "readonly",
         toolProfile: null,
         createdAt: now,
@@ -79,8 +91,8 @@ export function seedAgents(db: BetterSQLite3Database<typeof schema>) {
           isSystem: true,
           systemPrompt: "",
           capabilities: null,
-          avatarKind: "system",
-          avatarValue: agent.slug,
+          avatarKind,
+          avatarValue,
           permissionMode: "readonly",
           toolProfile: null,
           updatedAt: now

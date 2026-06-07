@@ -2,12 +2,21 @@
 
 import { Loader2, PanelRightClose, PanelRightOpen, TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
+import { AgentCreatorPreviewCard } from "@/components/chat/AgentCreatorPreviewCard";
 import { ConversationSetup } from "@/components/chat/ConversationSetup";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { ConversationSummary, ConversationView, MockMessage, RosterItem } from "@/lib/conversations/types";
 import type { InteractionDecision } from "@/lib/interactions/types";
+import type { AgentDraft } from "@/lib/skills/agent-creator/types";
+
+type AgentCreatorPreviewState = {
+  draft: AgentDraft | null;
+  status: "preview" | "saving" | "done" | "error" | null;
+  error?: string;
+};
 
 type MessageStreamProps = {
+  agentCreatorPreview?: AgentCreatorPreviewState;
   conversation: ConversationSummary | null;
   draftWorkspacePath?: string;
   error: string | null;
@@ -16,6 +25,9 @@ type MessageStreamProps = {
   isLoading: boolean;
   isLoadingMore?: boolean;
   messages: MockMessage[];
+  onAgentCreatorCancel?: () => Promise<void>;
+  onAgentCreatorRegenerate?: () => Promise<void>;
+  onAgentCreatorSave?: () => Promise<void>;
   onLoadMore?: () => void;
   onRegenerate?: (messageId: string) => Promise<void>;
   onRespondInteraction?: (interactionId: string, decision: InteractionDecision) => Promise<void>;
@@ -27,6 +39,7 @@ type MessageStreamProps = {
 };
 
 export function MessageStream({
+  agentCreatorPreview,
   conversation,
   draftWorkspacePath,
   error,
@@ -35,6 +48,9 @@ export function MessageStream({
   isLoading,
   isLoadingMore,
   messages,
+  onAgentCreatorCancel,
+  onAgentCreatorRegenerate,
+  onAgentCreatorSave,
   onLoadMore,
   onRegenerate,
   onRespondInteraction,
@@ -138,6 +154,17 @@ export function MessageStream({
                 roster={roster}
               />
             ))}
+            {agentCreatorPreview?.draft && agentCreatorPreview.status ? (
+              <AgentCreatorPreviewCard
+                draft={agentCreatorPreview.draft}
+                error={agentCreatorPreview.error}
+                key="agent-creator-preview"
+                onCancel={() => onAgentCreatorCancel?.()}
+                onRegenerate={() => onAgentCreatorRegenerate?.()}
+                onSave={() => onAgentCreatorSave?.()}
+                status={agentCreatorPreview.status === "error" ? "error" : agentCreatorPreview.status}
+              />
+            ) : null}
           </div>
         )}
         {error ? <div className="inline-error">{error}</div> : null}

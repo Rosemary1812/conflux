@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Composer } from "@/components/chat/Composer";
 import { MessageStream } from "@/components/chat/MessageStream";
 import { ContextPanel } from "@/components/context/ContextPanel";
@@ -16,6 +16,8 @@ import type {
 } from "@/lib/conversations/types";
 import type { ConversationStreamEvent } from "@/lib/conversations/stream-bus";
 import type { AgentInteraction, InteractionDecision } from "@/lib/interactions/types";
+import type { AgentDraft } from "@/lib/skills/agent-creator/types";
+import { AGENT_CREATOR_SYSTEM_AGENT_ID } from "@/lib/db/seed";
 
 export function AppShell() {
   const [view, setView] = useState<ConversationView>("new-single");
@@ -34,6 +36,11 @@ export function AppShell() {
   const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | undefined>();
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [orchestratorTasks, setOrchestratorTasks] = useState<GroupTask[]>([]);
+  const [agentCreatorPreview, setAgentCreatorPreview] = useState<{
+    draft: AgentDraft | null;
+    status: "preview" | "saving" | "done" | "error" | null;
+    error?: string;
+  }>({ draft: null, status: null });
 
   const isGroup = view === "group" || view === "new-group";
   const activeConversation =
@@ -54,12 +61,14 @@ export function AppShell() {
       setPendingInteractions([]);
       setRoster([]);
       setOrchestratorTasks([]);
+      setAgentCreatorPreview({ draft: null, status: null });
       return;
     }
 
     void loadMessages(activeConversationId);
     void loadPendingInteractions(activeConversationId);
     void loadRoster(activeConversationId);
+    void loadAgentCreatorSession(activeConversationId);
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -202,6 +211,12 @@ export function AppShell() {
       void loadMessages(activeConversationId);
     });
 
+    events.addEventListener("agent_creator_session", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+      if (payload.type !== "agent_creator_session") return;
+      applyAgentCreatorSession(payload.state, payload.draft, payload.lastSummary);
+    });
+
     events.onerror = () => {
       // Let EventSource keep its built-in retry behavior.
       // Closing here makes the stream permanently dead after a transient error.
@@ -319,6 +334,100 @@ export function AppShell() {
       setRoster(payload.roster ?? []);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "加载群聊成员失败。");
+    }
+  }
+
+  async function loadAgentCreatorSession(conversationId: string) {
+    try {
+      const response = await fetch(`/api/agent-creator/${conversationId}/session`);
+      const payload = (await response.json()) as {
+        session?: { state: string; draft: Partial<AgentDraft> | null } | null;
+        error?: string;
+      };
+      if (!response.ok || !payload.session) {
+        setAgentCreatorPreview({ draft: null, status: null });
+        return;
+      }
+      applyAgentCreatorSession(
+        payload.session.state as "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled",
+        payload.session.draft ?? null,
+        ""
+      );
+    } catch {
+      setAgentCreatorPreview({ draft: null, status: null });
+    }
+  }
+
+  function applyAgentCreatorSession(
+    state: "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled",
+    draft: Partial<AgentDraft> | null,
+    _lastSummary: string
+  ) {
+    if (state === "preview" || state === "saving" || state === "done") {
+      if (!draft) {
+        return;
+      }
+      setAgentCreatorPreview({ draft: draft as AgentDraft, status: state });
+      return;
+    }
+    if (state === "cancelled") {
+      setAgentCreatorPreview({ draft: null, status: null });
+    }
+  }
+
+  async function saveAgentCreator() {
+    if (!activeConversationId) return;
+    setAgentCreatorPreview((current) => ({ ...current, status: "saving", error: undefined }));
+    try {
+      const response = await fetch(`/api/agent-creator/${activeConversationId}/save`, {
+        method: "POST"
+      });
+      const payload = (await response.json()) as { result?: { kind: string }; error?: string };
+      if (!response.ok) {
+        const message = payload.error ?? "保存失败。";
+        setAgentCreatorPreview((current) => ({ ...current, status: "error", error: message }));
+        return;
+      }
+      if (payload.result?.kind === "saved") {
+        setAgentCreatorPreview((current) => ({ ...current, status: "done" }));
+        return;
+      }
+      if (payload.result?.kind === "error") {
+        const message = (payload.result as { error?: string }).error ?? "保存失败。";
+        setAgentCreatorPreview((current) => ({ ...current, status: "error", error: message }));
+      }
+    } catch (saveError) {
+      setAgentCreatorPreview((current) => ({
+        ...current,
+        status: "error",
+        error: saveError instanceof Error ? saveError.message : "保存失败。"
+      }));
+    }
+  }
+
+  async function regenerateAgentCreator() {
+    if (!activeConversationId) return;
+    setAgentCreatorPreview({ draft: null, status: null });
+    try {
+      await fetch(`/api/agent-creator/${activeConversationId}/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+    } catch {
+      // ignore — SSE will republish if it succeeds
+    }
+  }
+
+  async function cancelAgentCreatorSession() {
+    if (!activeConversationId) return;
+    setAgentCreatorPreview({ draft: null, status: null });
+    try {
+      await fetch(`/api/agent-creator/${activeConversationId}/cancel`, {
+        method: "POST"
+      });
+    } catch {
+      // ignore
     }
   }
 
@@ -653,6 +762,7 @@ export function AppShell() {
       />
       <section className="chat-surface">
         <MessageStream
+          agentCreatorPreview={agentCreatorPreview}
           conversation={activeConversation}
           draftWorkspacePath={draftWorkspacePath}
           error={error}
@@ -661,6 +771,9 @@ export function AppShell() {
           isLoading={isLoading}
           isLoadingMore={isLoadingMore}
           messages={messagesWithInteractions}
+          onAgentCreatorCancel={cancelAgentCreatorSession}
+          onAgentCreatorRegenerate={regenerateAgentCreator}
+          onAgentCreatorSave={saveAgentCreator}
           onLoadMore={() => {
             if (activeConversationId) {
               void loadMoreMessages(activeConversationId);
