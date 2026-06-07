@@ -5,6 +5,7 @@ import {
   Archive,
   ArchiveRestore,
   Check,
+  X,
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
@@ -46,8 +47,11 @@ export function ConversationSidebar({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
-  const activeConversations = conversations.filter((conversation) => !conversation.archivedAt);
-  const archivedConversations = conversations.filter((conversation) => conversation.archivedAt);
+  const [searchTerm, setSearchTerm] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const filteredConversations = filterConversations(conversations, searchTerm);
+  const activeConversations = filteredConversations.filter((conversation) => !conversation.archivedAt);
+  const archivedConversations = filteredConversations.filter((conversation) => conversation.archivedAt);
   const deleteTarget = conversations.find((conversation) => conversation.id === deleteTargetId) ?? null;
 
   function startRename(conversation: ConversationSummary) {
@@ -67,6 +71,18 @@ export function ConversationSidebar({
     setRenameTitle("");
   }
 
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -78,8 +94,26 @@ export function ConversationSidebar({
 
       <label className="search-box">
         <Search size={15} />
-        <input aria-label="搜索会话" placeholder="搜索" type="search" />
-        <kbd>⌘K</kbd>
+        <input
+          aria-label="搜索会话"
+          onChange={(event) => setSearchTerm(event.target.value)}
+          placeholder="搜索"
+          ref={searchInputRef}
+          type="search"
+          value={searchTerm}
+        />
+        {searchTerm ? (
+          <button
+            aria-label="清空搜索"
+            className="search-clear"
+            onClick={() => setSearchTerm("")}
+            type="button"
+          >
+            <X size={14} />
+          </button>
+        ) : (
+          <kbd>⌘K</kbd>
+        )}
       </label>
 
       <div className="sidebar-actions">
@@ -106,6 +140,9 @@ export function ConversationSidebar({
           <span>聊天</span>
           <span>⌄</span>
         </div>
+        {activeConversations.length === 0 ? (
+          <div className="conversation-empty">{searchTerm ? "无匹配会话" : "暂无会话"}</div>
+        ) : null}
         {activeConversations.map((conversation) => {
           const view = conversation.mode === "group" ? "group" : "single";
           const active =
@@ -329,6 +366,20 @@ function ConversationMenu({
         </span>
       ) : null}
     </span>
+  );
+}
+
+function filterConversations(conversations: ConversationSummary[], searchTerm: string) {
+  const query = searchTerm.trim().toLowerCase();
+
+  if (!query) {
+    return conversations;
+  }
+
+  return conversations.filter(
+    (conversation) =>
+      conversation.title.toLowerCase().includes(query) ||
+      conversation.preview.toLowerCase().includes(query)
   );
 }
 

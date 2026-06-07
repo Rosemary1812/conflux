@@ -68,7 +68,7 @@ export function createConversation(input: CreateConversationInput = {}) {
   return getConversation(row.id);
 }
 
-export function listConversations(): ConversationSummary[] {
+export function listConversations(options: { q?: string } = {}): ConversationSummary[] {
   const rows = getDb()
     .select({
       conversation: conversations,
@@ -79,9 +79,28 @@ export function listConversations(): ConversationSummary[] {
     .orderBy(desc(conversations.updatedAt))
     .all();
 
+  const query = options.q?.trim().toLowerCase();
+
   return rows
     .filter(({ conversation }) => conversation.status !== "empty" || Boolean(conversation.lockedAgentId))
-    .map(({ conversation, agent }) => toConversationSummary(conversation, agent));
+    .map(({ conversation, agent }) => {
+      const latestMessage = getLatestMessage(conversation.id);
+      return {
+        summary: toConversationSummary(conversation, agent, latestMessage),
+        latestMessage
+      };
+    })
+    .filter(({ summary, latestMessage }) => {
+      if (!query) {
+        return true;
+      }
+
+      return (
+        summary.title.toLowerCase().includes(query) ||
+        (latestMessage?.content.toLowerCase().includes(query) ?? false)
+      );
+    })
+    .map(({ summary }) => summary);
 }
 
 export function getConversation(id: string) {
@@ -746,12 +765,18 @@ function getLockedAgent(conversationId: string) {
   return row ? toAgentSummary(row.agent) : null;
 }
 
-function toConversationSummary(conversation: ConversationRow, agent: AgentRow | null): ConversationSummary {
+function toConversationSummary(
+  conversation: ConversationRow,
+  agent: AgentRow | null,
+  latestMessage?: MessageRow | null
+): ConversationSummary {
+  const fallbackPreview = agent ? `${agent.name} 已锁定` : "等待首条消息 @ 一个 Agent";
+
   return {
     id: conversation.id,
     mode: conversation.mode,
     title: conversation.title,
-    preview: agent ? `${agent.name} 已锁定` : "等待首条消息 @ 一个 Agent",
+    preview: latestMessage ? previewFromMessage(latestMessage) : fallbackPreview,
     status: conversation.status,
     avatar: agent ? slugFor(toAgentSummary(agent)) : "claude-code",
     workspacePath: conversation.workspacePath || defaultWorkspacePath(),
@@ -759,6 +784,21 @@ function toConversationSummary(conversation: ConversationRow, agent: AgentRow | 
     archivedAt: conversation.archivedAt,
     updatedAt: conversation.updatedAt
   };
+}
+
+function getLatestMessage(conversationId: string) {
+  return getDb()
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId))
+    .orderBy(desc(messages.createdAt))
+    .get();
+}
+
+function previewFromMessage(message: MessageRow) {
+  const authorPrefix = message.role === "user" ? "你" : message.authorName;
+  const content = message.content.replace(/\s+/g, " ").trim();
+  return `${authorPrefix}: ${content || "（空消息）"}`.slice(0, 80);
 }
 
 function listConversationArtifacts(conversationId: string) {

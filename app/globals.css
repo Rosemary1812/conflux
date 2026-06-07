@@ -138,6 +138,24 @@ pre {
   font-size: 11px;
 }
 
+.search-clear {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.search-clear:hover {
+  background: var(--bg-shell-hover);
+  color: var(--text-1);
+}
+
 .sidebar-actions {
   display: grid;
   flex-shrink: 0;
@@ -177,6 +195,12 @@ pre {
   overflow-y: auto;
   border-top: 1px solid var(--border-light);
   padding: 0 10px 10px;
+}
+
+.conversation-empty {
+  padding: 12px 8px;
+  color: var(--text-3);
+  font-size: 13px;
 }
 
 .archived-section {

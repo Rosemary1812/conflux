@@ -3,8 +3,9 @@ import { ApiError, createConversation, listConversations } from "@/lib/conversat
 
 export const runtime = "nodejs";
 
-export function GET() {
-  return NextResponse.json({ conversations: listConversations() });
+export function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  return NextResponse.json({ conversations: listConversations({ q: searchParams.get("q") ?? undefined }) });
 }
 
 export async function POST(request: Request) {
