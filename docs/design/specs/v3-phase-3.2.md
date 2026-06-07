@@ -20,6 +20,7 @@
 - V3.2 使用 Planner Provider API 做结构化抽取，不使用 Claude Agent SDK。
 - 自建 Agent 的底层平台固定为 `claude_code`，但 SDK option 映射、Provider `protocol='anthropic'` 校验、per-run env 注入均留到 V3.4。
 - Choice / Approval 不新增交互系统，复用 V1.5 `agent_interactions`。
+- V3.2 不引入头像选择；创建时统一给默认头像。上传 / 修改头像放到后续“自定义 Agent 设置页”。
 
 ## 2. TypeScript 类型与 Zod Schema
 
@@ -75,17 +76,10 @@ export const permissionModeSchema = z.enum(["readonly", "editable"]);
 
 export const toolProfileSchema = z.enum(["readonly", "code-author", "executor"]);
 
-export const avatarSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("emoji"),
-    value: z.string().min(1).max(8)
-  }),
-  z.object({
-    kind: z.literal("uploaded"),
-    value: z.string().min(1), // attachmentId or storage handle
-    mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]).optional()
-  })
-]);
+export const avatarSchema = z.object({
+  kind: z.literal("emoji"),
+  value: z.literal("🤖")
+});
 
 export const agentDraftSchema = z.object({
   name: z.string().min(1).max(48),
@@ -270,8 +264,8 @@ V3.2 默认不新增 endpoint。`/agent-creator` 作为内置 Skill/workflow 挂
 | `is_system` | V3.2 固定 | `0` |
 | `system_prompt` | `AgentDraft.system_prompt` | 8000 字符上限 |
 | `capabilities` | `AgentDraft.capabilities` | JSON string |
-| `avatar_kind` | `AgentDraft.avatar.kind` | `emoji` / `uploaded` |
-| `avatar_value` | `AgentDraft.avatar.value` | emoji 或 attachment/storage handle |
+| `avatar_kind` | V3.2 固定 | `emoji` |
+| `avatar_value` | V3.2 固定 | `🤖` |
 | `permission_mode` | `AgentDraft.permission_mode` | `readonly` / `editable` |
 | `tool_profile` | `AgentDraft.tool_profile` | `readonly` / `code-author` / `executor` |
 | `created_at` / `updated_at` | 后端 | 当前时间戳 |
@@ -319,7 +313,6 @@ export type AgentCreatorPreviewCardProps = {
   onSave: () => void;
   onRegenerate: (instruction?: string) => void;
   onCancel: () => void;
-  onAvatarChange?: (avatar: AgentDraft["avatar"]) => void;
 };
 ```
 
@@ -333,11 +326,10 @@ export type AgentCreatorPreviewCardProps = {
 | `onSave` | 写入 `agents` 表；触发 `USER_CONFIRMED` |
 | `onRegenerate` | “再改一下 / 换一档 profile”；触发 `USER_REGENERATE_PROFILE` |
 | `onCancel` | 取消 workflow；触发 `USER_CANCELLED` |
-| `onAvatarChange` | 预览阶段调整头像；只更新 draft，不另开 endpoint |
 
-### 6.3 `AgentAvatarPicker`
+### 6.3 `AgentAvatarPicker`（后移到自定义 Agent 设置页）
 
-头像选择器给 `AgentCreatorPreviewCard` 和后续设置页复用。V3.2 首版支持 16 个 emoji 与上传图片入口。
+V3.2 `/agent-creator` 不渲染 `AgentAvatarPicker`，只写默认头像。头像上传 / 修改能力放到后续“自定义 Agent 设置页”，届时再实现该组件。这里保留 props 草案，作为设置页阶段的接口边界，不计入 V3.2 主线验收。
 
 ```ts
 export type AgentAvatarPickerProps = {
@@ -362,7 +354,7 @@ export type AgentAvatarPickerProps = {
 | `disabled` | 保存中禁用 |
 | `maxUploadBytes` | 上传上限，默认 1MB |
 | `acceptedMimeTypes` | jpg/png/webp/gif |
-| `onChange` | 选择 emoji 或上传成功后更新 draft |
+| `onChange` | 选择 emoji 或上传成功后更新 Agent 编辑表单 |
 | `onUploadRequest` | 复用附件上传能力，返回 uploaded avatar |
 
 ## 7. 调用序列
@@ -396,8 +388,8 @@ if info_sufficient=true:
 | 问题 | 当前建议 | 阶段 |
 | --- | --- | --- |
 | creator session 是否需要持久化表 | V3.2 首版可用内存 Map；若刷新恢复很重要，再补 `agent_creator_sessions` 表 | C1 实现前确认 |
-| `agent_interactions.agent_id` 是否允许特殊占位 | 当前计划使用 `__creator__` 占位，但表外键指向 `agents.id`；更稳妥方案是 seed 一个 `agent-creator` 系统 Agent 或允许 nullable。C1 必须先查现有 V3.1 runner 约束后定 | C1 必须解决 |
-| 上传头像是否复用现有附件选择 API | 计划复用附件能力；若当前没有 `/api/attachments/select`，首版可只开放 emoji，把上传降为 P1 | C6 / C8 |
+| `agent_interactions.agent_id` 如何填写 | `agent_interactions.agent_id` 有外键，必须指向真实 `agents.id`。V3.2 建议 seed 一个 `agent-creator` 系统 Agent 记录，专门承载内置 creator workflow 的 Choice 卡；不要使用 `__creator__` 这类假 id | C1 必须解决 |
+| 上传头像放在哪个阶段 | 已定：V3.2 不做头像选择，只写默认 `emoji=🤖`；上传 / 修改头像放到后续“自定义 Agent 设置页” | 后续设置页阶段 |
 | `permission_mode='editable'` 与 `tool_profile='executor'` 的产品关系 | UI 对用户只讲 readonly/editable；executor 作为内部高危 profile，需要二次确认 | C6 |
 | Planner Provider 选择来源 | 默认复用 V2 Orchestrator Planner Provider；若未配置，提示先配置 Provider，不新增 endpoint | C2 |
 | 保存完成后是否自动把自建 Agent 加入当前单聊 | 不自动加入。V3.2 只创建；V3.4 / V3.5 再定义运行入口 | 后续阶段 |
@@ -408,5 +400,5 @@ if info_sufficient=true:
 - 文档包含 `AgentCreatorState`、`AgentCreatorEvent`、`PlannerLLMResponse`、`ChoicePayload`、`AgentDraft` 的 TypeScript 类型与 Zod schema。
 - 文档包含 `idle / collecting / confirm_build / preview / saving / done / cancelled` 的状态机转移表。
 - 文档明确 V3.2 默认不新增 endpoint，并复用 `/api/messages` 与 `POST /api/interactions/:id/respond` / `agent_interactions`。
-- 文档包含 `SlashCommandPanel`、`AgentCreatorPreviewCard`、`AgentAvatarPicker` 的 props。
+- 文档包含 `SlashCommandPanel`、`AgentCreatorPreviewCard` 的 V3.2 props；`AgentAvatarPicker` 仅作为后续设置页 props 草案保留，不在 V3.2 实现。
 - 文档明确 V3.2 不启动 Claude Agent SDK；用户确认保存后只写 `agents` 表，后续运行时 SDK 接入归 V3.4。
