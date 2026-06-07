@@ -248,6 +248,7 @@ V3.2 默认不新增 endpoint。`/agent-creator` 作为内置 Skill/workflow 挂
 | `POST /api/interactions/:id/respond` | 前端 -> 后端 | `selectedOptionIds`、`customText` | 用户回答 Choice 卡；runner 读取 response 后推进状态机 | 否 |
 | SSE `interaction_requested` | 后端 -> 前端 | `interaction` | 通知消息流渲染 `InteractionChoiceCard` | 否 |
 | SSE `interaction_resolved` | 后端 -> 前端 | `interactionId`、`status` | 用户回应后更新 Choice 卡状态 | 否 |
+| `agent_interactions.agent_id` | 后端写入 | 真实 `agents.id` | 固定写入 seed 的系统 Agent `agent-creator`，用于表示这些 Choice 卡属于内置 creator workflow | 否 |
 | `agents` 表 | 后端写入 | `slug`、`name`、`platform`、`description`、`enabled`、`is_system`、`system_prompt`、`capabilities`、`avatar_kind`、`avatar_value`、`permission_mode`、`tool_profile` | 保存预览时插入自建 Agent：`platform='claude_code'`、`is_system=0`、`enabled=1` | 否 |
 | Planner Provider API | 后端 -> Provider | `messages`、`model`、`json schema` | 仅用于抽取 `PlannerLLMResponse`；不等同于自建 Agent runtime | 否，复用 V2 Provider |
 
@@ -383,12 +384,12 @@ if info_sufficient=true:
   -> state=done
 ```
 
-## 8. 未决问题
+## 8. 已定决策与未决问题
 
 | 问题 | 当前建议 | 阶段 |
 | --- | --- | --- |
 | creator session 是否需要持久化表 | V3.2 首版可用内存 Map；若刷新恢复很重要，再补 `agent_creator_sessions` 表 | C1 实现前确认 |
-| `agent_interactions.agent_id` 如何填写 | `agent_interactions.agent_id` 有外键，必须指向真实 `agents.id`。V3.2 建议 seed 一个 `agent-creator` 系统 Agent 记录，专门承载内置 creator workflow 的 Choice 卡；不要使用 `__creator__` 这类假 id | C1 必须解决 |
+| `agent_interactions.agent_id` 如何填写 | 已定：seed 一个真实的系统 Agent 记录，`slug/id='agent-creator'`、`is_system=1`，专门承载内置 creator workflow 的 Choice 卡。`/agent-creator` 产生的 `agent_interactions(kind='choice')` 全部挂到这条真实 Agent 记录；不要使用 `__creator__` 这类假 id | C1 必须实现 |
 | 上传头像放在哪个阶段 | 已定：V3.2 不做头像选择，只写默认 `emoji=🤖`；上传 / 修改头像放到后续“自定义 Agent 设置页” | 后续设置页阶段 |
 | `permission_mode='editable'` 与 `tool_profile='executor'` 的产品关系 | UI 对用户只讲 readonly/editable；executor 作为内部高危 profile，需要二次确认 | C6 |
 | Planner Provider 选择来源 | 默认复用 V2 Orchestrator Planner Provider；若未配置，提示先配置 Provider，不新增 endpoint | C2 |
