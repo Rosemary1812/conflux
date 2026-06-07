@@ -9,6 +9,13 @@ export const agents = sqliteTable(
     platform: text("platform").notNull(),
     description: text("description").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    isSystem: integer("is_system", { mode: "boolean" }).notNull().default(true),
+    systemPrompt: text("system_prompt").notNull().default(""),
+    capabilities: text("capabilities"),
+    avatarKind: text("avatar_kind"),
+    avatarValue: text("avatar_value"),
+    permissionMode: text("permission_mode").notNull().default("readonly"),
+    toolProfile: text("tool_profile"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull()
   },
@@ -103,6 +110,43 @@ export const messageAttachments = sqliteTable("message_attachments", {
   storagePath: text("storage_path").notNull(),
   createdAt: integer("created_at").notNull()
 });
+
+export const skills = sqliteTable(
+  "skills",
+  {
+    id: text("id").primaryKey(),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    body: text("body").notNull(),
+    kind: text("kind", { enum: ["built-in", "user"] }).notNull(),
+    version: integer("version").notNull().default(1),
+    sourceAttachmentId: text("source_attachment_id").references(() => messageAttachments.id, {
+      onDelete: "set null"
+    }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull()
+  },
+  (table) => ({
+    slugIdx: uniqueIndex("skills_slug_idx").on(table.slug)
+  })
+);
+
+export const agentSkills = sqliteTable(
+  "agent_skills",
+  {
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at").notNull()
+  },
+  (table) => ({
+    agentSkillUniqueIdx: uniqueIndex("agent_skills_agent_skill_idx").on(table.agentId, table.skillId)
+  })
+);
 
 export const agentRuns = sqliteTable(
   "agent_runs",

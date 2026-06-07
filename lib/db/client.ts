@@ -37,6 +37,13 @@ function migrate(database: Database.Database) {
       platform TEXT NOT NULL,
       description TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
+      is_system INTEGER NOT NULL DEFAULT 1,
+      system_prompt TEXT NOT NULL DEFAULT '',
+      capabilities TEXT,
+      avatar_kind TEXT,
+      avatar_value TEXT,
+      permission_mode TEXT NOT NULL DEFAULT 'readonly',
+      tool_profile TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -83,6 +90,26 @@ function migrate(database: Database.Database) {
       size INTEGER NOT NULL,
       storage_path TEXT NOT NULL,
       created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      body TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('built-in', 'user')),
+      version INTEGER NOT NULL DEFAULT 1,
+      source_attachment_id TEXT REFERENCES message_attachments(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_skills (
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      UNIQUE(agent_id, skill_id)
     );
 
     CREATE TABLE IF NOT EXISTS agent_runs (
@@ -203,6 +230,9 @@ function migrate(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS providers_protocol_enabled_idx
       ON providers(protocol, enabled);
 
+    CREATE INDEX IF NOT EXISTS skills_kind_idx
+      ON skills(kind);
+
     CREATE INDEX IF NOT EXISTS orchestrator_runs_conversation_idx
       ON orchestrator_runs(conversation_id, started_at);
 
@@ -215,6 +245,8 @@ function migrate(database: Database.Database) {
 
   ensureColumn(database, "conversations", "archived_at", "INTEGER");
   ensureColumn(database, "conversations", "workspace_path", "TEXT NOT NULL DEFAULT ''");
+  ensureAgentsV3Columns(database);
+  ensureV3SkillTables(database);
   ensureAgentRunsAwaitingInteraction(database);
   ensureProviderColumns(database);
   ensureConversationAgentsV2Migration(database);
@@ -235,6 +267,51 @@ function ensureProviderColumns(database: Database.Database) {
   ensureColumn(database, "providers", "last_check_status", "TEXT NOT NULL DEFAULT 'unchecked'");
   ensureColumn(database, "providers", "last_check_message", "TEXT");
   ensureColumn(database, "providers", "last_checked_at", "INTEGER");
+}
+
+function ensureAgentsV3Columns(database: Database.Database) {
+  ensureColumn(database, "agents", "is_system", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(database, "agents", "system_prompt", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "agents", "capabilities", "TEXT");
+  ensureColumn(database, "agents", "avatar_kind", "TEXT");
+  ensureColumn(database, "agents", "avatar_value", "TEXT");
+  ensureColumn(database, "agents", "permission_mode", "TEXT NOT NULL DEFAULT 'readonly'");
+  ensureColumn(database, "agents", "tool_profile", "TEXT");
+
+  database.exec(`
+    UPDATE agents
+    SET
+      avatar_kind = COALESCE(avatar_kind, 'system'),
+      avatar_value = COALESCE(avatar_value, slug)
+    WHERE is_system = 1;
+  `);
+}
+
+function ensureV3SkillTables(database: Database.Database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      body TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('built-in', 'user')),
+      version INTEGER NOT NULL DEFAULT 1,
+      source_attachment_id TEXT REFERENCES message_attachments(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_skills (
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      UNIQUE(agent_id, skill_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS skills_kind_idx
+      ON skills(kind);
+  `);
 }
 
 function ensureAgentRunsAwaitingInteraction(database: Database.Database) {
