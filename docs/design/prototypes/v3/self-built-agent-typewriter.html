@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conflux · V3.5 自建 Agent 群聊 UI 示意</title>
+  <style>
+    :root {
+      --primary: #156f72;
+      --primary-soft: #e6f4f3;
+      --blue: #2f6fed;
+      --bg-app: #f2f4f7;
+      --bg-panel: #ffffff;
+      --bg-subtle: #f7f8fa;
+      --bg-input: #f4f6f8;
+      --text-1: #1e242c;
+      --text-2: #5c6673;
+      --text-3: #87919f;
+      --border: rgba(96, 111, 128, 0.24);
+      --border-light: rgba(96, 111, 128, 0.14);
+      --green: #248a5f;
+      --shadow-sm: 0 1px 3px rgba(25, 35, 45, 0.1);
+      --font: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font);
+      color: var(--text-1);
+      background: var(--bg-app);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+      padding: 56px 24px 24px;
+    }
+
+    /* ─── Top demo bar ─── */
+    .demo-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; padding: 10px 18px;
+      background: #1e242c; color: #edf0f5; font-size: 13px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+    }
+    .demo-bar strong { font-size: 14px; }
+    .demo-note { color: #acb2bd; font-size: 12px; }
+
+    /* ─── Split layout ─── */
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 18px;
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-light);
+      border-radius: 14px;
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg-subtle);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .panel-title { font-size: 13px; font-weight: 700; }
+    .panel-sub { font-size: 11px; color: var(--text-3); }
+    .panel-body { padding: 16px; }
+    .legend {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--text-2);
+    }
+    .legend-dot {
+      width: 6px; height: 6px; border-radius: 999px; background: var(--blue);
+      animation: bubble-live-pulse 1.6s ease-in-out infinite;
+    }
+
+    /* ─── Message stream (left) ─── */
+    .stream { display: flex; flex-direction: column; gap: 16px; }
+    .message-row { display: flex; gap: 10px; align-items: flex-start; }
+    .message-row.user { flex-direction: row-reverse; }
+    .message-avatar {
+      flex-shrink: 0;
+      width: 30px; height: 30px;
+      border-radius: 999px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border-light);
+      background: var(--bg-panel);
+      overflow: hidden;
+    }
+    .message-avatar.system svg { width: 22px; height: 22px; }
+    .message-avatar.custom { font-size: 18px; }
+    .message-body { min-width: 0; flex: 1; }
+    .message-sender {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 4px; font-size: 12px; color: var(--text-2);
+    }
+    .message-row.user .message-sender { justify-content: flex-end; }
+    .sender-name { color: var(--text-1); font-weight: 700; }
+    .sender-role {
+      padding: 1px 6px; border-radius: 4px;
+      font-size: 10px; font-weight: 700;
+      background: rgba(96, 111, 128, 0.1); color: var(--text-2);
+    }
+    .sender-role.done { background: rgba(36, 138, 95, 0.1); color: var(--green); }
+    .sender-role.running { background: rgba(47, 111, 237, 0.1); color: var(--blue); }
+
+    .message-bubble {
+      position: relative;
+      border: 1px solid var(--border-light);
+      border-radius: 14px;
+      background: var(--bg-panel);
+      box-shadow: var(--shadow-sm);
+      padding: 12px 14px;
+      line-height: 1.65;
+      font-size: 13.5px;
+    }
+    .message-row.user .message-bubble {
+      border-color: transparent;
+      background: var(--primary-soft);
+    }
+    .message-bubble.bubble-with-badge { /* dot floats top-right */ }
+    .bubble-live-dot {
+      position: absolute; top: 10px; right: 10px;
+      width: 6px; height: 6px; border-radius: 999px;
+      background: var(--blue);
+      animation: bubble-live-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes bubble-live-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.85); }
+    }
+
+    /* callout tag for diff */
+    .callout {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--text-3);
+      font-style: italic;
+    }
+
+    /* ─── Right context panel ─── */
+    .context-panel { width: 100%; }
+    .context-section { padding: 14px; border-bottom: 1px solid var(--border-light); }
+    .context-section:last-child { border-bottom: 0; }
+    .section-title {
+      margin-bottom: 10px;
+      color: var(--text-3);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .agent-stack-card { display: flex; flex-direction: column; gap: 8px; }
+    .agent-state-row {
+      display: flex; align-items: center; gap: 10px;
+      border-radius: 12px; background: var(--bg-subtle);
+      padding: 10px 12px;
+    }
+    .context-agent-icon {
+      flex-shrink: 0;
+      width: 30px; height: 30px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border-light);
+      border-radius: 999px;
+      background: var(--bg-panel);
+      overflow: hidden;
+    }
+    .context-agent-icon.system svg { width: 22px; height: 22px; }
+    .context-agent-icon.custom { font-size: 18px; }
+    .agent-state-row .body { flex: 1; min-width: 0; }
+    .agent-state-row strong { display: block; margin-bottom: 2px; font-size: 13px; }
+    .agent-state-row .meta { color: var(--text-3); font-size: 11px; }
+    .capability-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .capability-tag {
+      border: 1px solid var(--border-light);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 10px;
+      color: var(--text-2);
+      background: var(--bg-input);
+    }
+    .badge-system {
+      font-size: 10px; padding: 1px 6px; border-radius: 4px;
+      background: rgba(21, 111, 114, 0.1); color: var(--primary);
+    }
+    .badge-custom {
+      font-size: 10px; padding: 1px 6px; border-radius: 4px;
+      background: rgba(103, 84, 200, 0.12); color: #6754c8;
+    }
+
+    /* ─── Note callout under context panel ─── */
+    .diff-note {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--bg-subtle);
+      font-size: 12px; color: var(--text-2);
+      line-height: 1.6;
+    }
+    .diff-note strong { color: var(--text-1); }
+  </style>
+</head>
+<body>
+  <header class="demo-bar">
+    <div>
+      <strong>V3.5 自建 Agent 群聊 UI</strong>
+      <span class="demo-note" style="margin-left: 12px;">左：消息流 / 右：群聊右栏"参与上下文"</span>
+    </div>
+    <div class="legend">
+      <span class="legend-dot"></span> 蓝色脉冲点 = 自建 Agent 气泡角标（仅消息流）
+    </div>
+  </header>
+
+  <div class="split">
+    <!-- ────────── Left: message stream ────────── -->
+    <section class="panel">
+      <header class="panel-header">
+        <span class="panel-title">群聊消息流</span>
+        <span class="panel-sub">@doc-reviewer 是 V3.2 创建的自建 Agent（readonly profile）</span>
+      </header>
+      <div class="panel-body">
+        <div class="stream">
+
+          <!-- User message -->
+          <div class="message-row user">
+            <div class="message-body">
+              <div class="message-sender"><span>我</span><span>10:24</span></div>
+              <div class="message-bubble">
+                @claude-code @doc-reviewer 帮我把 README.md 翻译成英文，先让 doc-reviewer 看一遍
+              </div>
+            </div>
+          </div>
+
+          <!-- System Agent: Claude Code -->
+          <div class="message-row">
+            <span class="message-avatar system" aria-label="Claude Code">
+              <!-- mini Claude mark -->
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect width="24" height="24" rx="5" fill="#D97757"/>
+                <path d="M7 17V7h3.6c1.7 0 2.9 1 2.9 2.6 0 1.1-.6 1.9-1.5 2.2 1.1.3 1.9 1.2 1.9 2.5 0 1.7-1.2 2.7-3 2.7H7Zm2-5.7h1.5c.7 0 1.2-.4 1.2-1s-.5-1-1.2-1H9v2Zm0 4.1h1.7c.8 0 1.3-.5 1.3-1.2s-.5-1.2-1.3-1.2H9v2.4Z" fill="#fff"/>
+              </svg>
+            </span>
+            <div class="message-body">
+              <div class="message-sender">
+                <span class="sender-name">Claude Code</span>
+                <span class="sender-role done">done</span>
+                <span>10:25</span>
+              </div>
+              <div class="message-bubble">
+                README.md 已翻译，文件保存到 <code>README.en.md</code>。Doc Reviewer 接下来会基于 system_prompt 校对。
+                <p class="callout">↑ 系统 Agent 气泡：右上角无角标。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Custom Agent: Doc Reviewer (with live badge + typing) -->
+          <div class="message-row">
+            <span class="message-avatar custom" aria-label="Doc Reviewer">📝</span>
+            <div class="message-body">
+              <div class="message-sender">
+                <span class="sender-name">Doc Reviewer</span>
+                <span class="sender-role running">running</span>
+                <span>10:26</span>
+              </div>
+              <div class="message-bubble bubble-with-badge">
+                <span class="bubble-live-dot"></span>
+                校对中。已检查：术语一致性（OK）、被动语态过度（建议改写 2 处）、代码块中的中文标点（已替换为英文）
+                <p class="callout">↑ 自建 Agent 气泡：右上角蓝色脉冲点常驻；capability tag 不显示。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Custom Agent: second turn (badge still on, no typing caret) -->
+          <div class="message-row">
+            <span class="message-avatar custom" aria-label="Doc Reviewer">📝</span>
+            <div class="message-body">
+              <div class="message-sender">
+                <span class="sender-name">Doc Reviewer</span>
+                <span class="sender-role done">done</span>
+                <span>10:27</span>
+              </div>
+              <div class="message-bubble bubble-with-badge">
+                <span class="bubble-live-dot"></span>
+                校对完成。共修改 6 处，详见 <code>README.en.md</code> 末尾的 Review Notes。
+                <p class="callout">↑ 第二轮气泡：脉冲点仍常驻（不仅是打字中可见）。</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ────────── Right: context panel ────────── -->
+    <aside class="panel context-panel">
+      <header class="panel-header">
+        <span class="panel-title">参与上下文</span>
+        <span class="panel-sub">群聊右栏</span>
+      </header>
+
+      <div class="context-section">
+        <div class="section-title">Roster</div>
+        <div class="agent-stack-card">
+
+          <!-- System Agent -->
+          <div class="agent-state-row">
+            <span class="context-agent-icon system" aria-label="Claude Code">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect width="24" height="24" rx="5" fill="#D97757"/>
+                <path d="M7 17V7h3.6c1.7 0 2.9 1 2.9 2.6 0 1.1-.6 1.9-1.5 2.2 1.1.3 1.9 1.2 1.9 2.5 0 1.7-1.2 2.7-3 2.7H7Zm2-5.7h1.5c.7 0 1.2-.4 1.2-1s-.5-1-1.2-1H9v2Zm0 4.1h1.7c.8 0 1.3-.5 1.3-1.2s-.5-1.2-1.3-1.2H9v2.4Z" fill="#fff"/>
+              </svg>
+            </span>
+            <div class="body">
+              <strong>Claude Code</strong>
+              <p class="meta">@claude-code · done</p>
+            </div>
+            <span class="badge-system">系统</span>
+          </div>
+
+          <!-- Custom Agent -->
+          <div class="agent-state-row">
+            <span class="context-agent-icon custom" aria-label="Doc Reviewer">📝</span>
+            <div class="body">
+              <strong>Doc Reviewer</strong>
+              <p class="meta">@doc-reviewer · running</p>
+              <div class="capability-tags">
+                <span class="capability-tag">代码审查</span>
+                <span class="capability-tag">文档撰写</span>
+              </div>
+            </div>
+            <span class="badge-custom">自建</span>
+          </div>
+
+          <!-- Orchestrator (kept as before) -->
+          <div class="agent-state-row">
+            <span class="context-agent-icon system" aria-label="Orchestrator">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect width="24" height="24" rx="5" fill="#156f72"/>
+                <path d="M5 12h14M12 5v14" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <div class="body">
+              <strong>Orchestrator</strong>
+              <p class="meta">调度中</p>
+            </div>
+            <span class="badge-system">系统</span>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="context-section">
+        <div class="section-title">任务分派</div>
+        <div class="agent-state-row">
+          <div class="body">
+            <strong>T-1 · 翻译 README.md</strong>
+            <p class="meta">@claude-code · done</p>
+          </div>
+        </div>
+        <div class="agent-state-row" style="margin-top:8px;">
+          <div class="body">
+            <strong>T-2 · 校对译文</strong>
+            <p class="meta">@doc-reviewer · running</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="diff-note">
+        <strong>视觉差异点：</strong><br>
+        • 头像：系统 = AgentIcon（产品 logo）/ 自建 = emoji（📝）；<br>
+        • capability tag：仅自建 Agent 在右栏显示；<br>
+        • 气泡角标：仅自建 Agent 消息右上角常驻蓝色脉冲点。
+      </div>
+    </aside>
+  </div>
+</body>
+</html>
