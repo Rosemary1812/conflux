@@ -13,6 +13,14 @@ const SETTINGS_ID = "default";
 
 type ProviderRow = typeof providers.$inferSelect;
 
+export type AnthropicRuntimeProvider = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  defaultModel: string;
+};
+
 export class ProviderApiError extends Error {
   constructor(
     message: string,
@@ -270,6 +278,42 @@ export function getEnvPlannerProvider(): ProviderRow | null {
     createdAt: 0,
     updatedAt: 0
   };
+}
+
+export function getAnthropicRuntimeProvider(): AnthropicRuntimeProvider | null {
+  const envProvider = getEnvPlannerProvider();
+
+  if (envProvider?.enabled && envProvider.protocol === "anthropic") {
+    return {
+      id: envProvider.id,
+      name: envProvider.name,
+      baseUrl: envProvider.baseUrl,
+      apiKey: decodeSecret(envProvider.apiKeyEncrypted),
+      defaultModel: envProvider.defaultModel
+    };
+  }
+
+  const settings = getOrchestratorSettings();
+
+  if (settings.plannerProviderId) {
+    const provider = getDb()
+      .select()
+      .from(providers)
+      .where(eq(providers.id, settings.plannerProviderId))
+      .get();
+
+    if (provider?.enabled && provider.protocol === "anthropic") {
+      return {
+        id: provider.id,
+        name: provider.name,
+        baseUrl: provider.baseUrl,
+        apiKey: decodeSecret(provider.apiKeyEncrypted),
+        defaultModel: provider.defaultModel
+      };
+    }
+  }
+
+  return null;
 }
 
 async function callProvider(provider: ProviderRow, apiKey: string) {

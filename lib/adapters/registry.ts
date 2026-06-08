@@ -1,5 +1,6 @@
 import type { AgentAdapter } from "@/lib/adapters/types";
 import { claudeCodeAdapter } from "@/lib/adapters/claude-code";
+import { claudeCodeSdkAdapter } from "@/lib/adapters/claude-code-sdk";
 import { codexAdapter } from "@/lib/adapters/codex";
 import { unavailableCliAdapter } from "@/lib/adapters/fallback";
 import { fakeAdapter } from "@/lib/adapters/fake";
@@ -26,6 +27,18 @@ export function getAdapter(platform: AgentPlatform | string) {
   }
 
   return adapters[platform as AgentPlatform];
+}
+
+export function getAdapterForAgent(agent: { platform: AgentPlatform | string; isSystem?: boolean }) {
+  if (process.env.AGENTHUB_ADAPTER_MODE === "fake") {
+    return adapters.fake;
+  }
+
+  if (agent.platform === "claude_code" && agent.isSystem === false) {
+    return claudeCodeSdkAdapter;
+  }
+
+  return getAdapter(agent.platform);
 }
 
 export function listAdapters() {

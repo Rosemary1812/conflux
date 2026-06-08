@@ -984,7 +984,11 @@ function toAgentSummary(agent: AgentRow): AgentSummary {
     slug: agent.slug,
     name: agent.name,
     platform: agent.platform as AgentSummary["platform"],
-    description: agent.description
+    description: agent.description,
+    isSystem: agent.isSystem,
+    systemPrompt: agent.systemPrompt,
+    permissionMode: agent.permissionMode as AgentSummary["permissionMode"],
+    toolProfile: agent.toolProfile as AgentSummary["toolProfile"]
   };
 }
 

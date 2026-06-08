@@ -40,14 +40,22 @@ export function buildOrchestratorContext(conversationId: string): OrchestratorCo
             slug: agent.slug,
             name: displayName,
             platform: agent.platform as RosterMember["agent"]["platform"],
-            description: agent.description
+            description: agent.description,
+            isSystem: agent.isSystem,
+            systemPrompt: agent.systemPrompt,
+            permissionMode: agent.permissionMode as RosterMember["agent"]["permissionMode"],
+            toolProfile: agent.toolProfile as RosterMember["agent"]["toolProfile"]
           }
         : {
             id: ca.agentId,
             slug: ca.alias,
             name: displayName,
             platform: "claude_code" as const,
-            description: ""
+            description: "",
+            isSystem: true,
+            systemPrompt: "",
+            permissionMode: "readonly",
+            toolProfile: null
           },
       capabilities: adapter?.capabilities ?? { supportsApproval: "none", supportsChoice: "none" },
       status: ca.status

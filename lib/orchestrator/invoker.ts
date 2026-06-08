@@ -41,7 +41,11 @@ export function invokeAgentForTask({
     slug: agentRow.slug,
     name: agentRow.name,
     platform: agentRow.platform as AgentSummary["platform"],
-    description: agentRow.description
+    description: agentRow.description,
+    isSystem: agentRow.isSystem,
+    systemPrompt: agentRow.systemPrompt,
+    permissionMode: agentRow.permissionMode as AgentSummary["permissionMode"],
+    toolProfile: agentRow.toolProfile as AgentSummary["toolProfile"]
   };
 
   const context = buildTaskContext(task, 2000);

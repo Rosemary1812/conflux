@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
-import { getAdapter } from "@/lib/adapters/registry";
+import { getAdapterForAgent } from "@/lib/adapters/registry";
 import type { AdapterAttachment, AdapterMessage, AgentEvent } from "@/lib/adapters/types";
 import { getDb } from "@/lib/db/client";
 import { agentExternalSessions, agentRuns, agents, artifacts, conversationAgents, conversations, messages } from "@/lib/db/schema";
@@ -181,7 +181,7 @@ async function drainAgentRun({
   signal: AbortSignal;
 }) {
   let content = "";
-  const adapter = getAdapter(agent.platform);
+  const adapter = getAdapterForAgent(agent);
   const beforeSnapshot = snapshotWorkspace(workspacePath);
 
   try {
@@ -190,6 +190,7 @@ async function drainAgentRun({
     for await (const event of adapter.run({
       runId,
       conversationId,
+      agent,
       workspacePath,
       messages: getAdapterMessages(conversationId),
       attachments,

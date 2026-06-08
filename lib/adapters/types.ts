@@ -1,4 +1,5 @@
 import type { AgentPlatform } from "@/lib/agents/types";
+import type { AgentSummary } from "@/lib/agents/types";
 import type { InteractionDecision, PendingAgentInteraction } from "@/lib/interactions/types";
 
 export type AdapterHealth = {
@@ -71,6 +72,7 @@ export type AgentEvent =
 export type AdapterRunParams = {
   runId: string;
   conversationId: string;
+  agent: AgentSummary;
   workspacePath: string;
   messages: AdapterMessage[];
   attachments: AdapterAttachment[];

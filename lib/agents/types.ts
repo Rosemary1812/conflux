@@ -6,4 +6,8 @@ export type AgentSummary = {
   name: string;
   platform: AgentPlatform;
   description: string;
+  isSystem: boolean;
+  systemPrompt: string;
+  permissionMode: "readonly" | "editable";
+  toolProfile: "readonly" | "code-author" | "executor" | null;
 };
