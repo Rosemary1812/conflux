@@ -77,7 +77,7 @@ export async function runAgentCreator({
   let session = getSession(conversationId);
 
   if (!session) {
-    session = createSession({ conversationId, userMessageId });
+    session = applyUserInput(createSession({ conversationId, userMessageId }), text);
   } else {
     session = applyUserInput(session, text);
   }

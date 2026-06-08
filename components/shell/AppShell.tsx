@@ -17,7 +17,7 @@ import type {
 import type { ConversationStreamEvent } from "@/lib/conversations/stream-bus";
 import type { AgentInteraction, InteractionDecision } from "@/lib/interactions/types";
 import type { AgentDraft } from "@/lib/skills/agent-creator/types";
-import { AGENT_CREATOR_SYSTEM_AGENT_ID } from "@/lib/db/seed";
+import type { SkillDraft } from "@/lib/skills/skill-creator/types";
 
 export function AppShell() {
   const [view, setView] = useState<ConversationView>("new-single");
@@ -38,6 +38,11 @@ export function AppShell() {
   const [orchestratorTasks, setOrchestratorTasks] = useState<GroupTask[]>([]);
   const [agentCreatorPreview, setAgentCreatorPreview] = useState<{
     draft: AgentDraft | null;
+    status: "preview" | "saving" | "done" | "error" | null;
+    error?: string;
+  }>({ draft: null, status: null });
+  const [skillCreatorPreview, setSkillCreatorPreview] = useState<{
+    draft: SkillDraft | null;
     status: "preview" | "saving" | "done" | "error" | null;
     error?: string;
   }>({ draft: null, status: null });
@@ -62,6 +67,7 @@ export function AppShell() {
       setRoster([]);
       setOrchestratorTasks([]);
       setAgentCreatorPreview({ draft: null, status: null });
+      setSkillCreatorPreview({ draft: null, status: null });
       return;
     }
 
@@ -69,6 +75,7 @@ export function AppShell() {
     void loadPendingInteractions(activeConversationId);
     void loadRoster(activeConversationId);
     void loadAgentCreatorSession(activeConversationId);
+    void loadSkillCreatorSession(activeConversationId);
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -217,6 +224,12 @@ export function AppShell() {
       applyAgentCreatorSession(payload.state, payload.draft, payload.lastSummary);
     });
 
+    events.addEventListener("skill_creator_session", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as ConversationStreamEvent;
+      if (payload.type !== "skill_creator_session") return;
+      applySkillCreatorSession(payload.state, payload.draft, payload.lastSummary);
+    });
+
     events.onerror = () => {
       // Let EventSource keep its built-in retry behavior.
       // Closing here makes the stream permanently dead after a transient error.
@@ -358,6 +371,27 @@ export function AppShell() {
     }
   }
 
+  async function loadSkillCreatorSession(conversationId: string) {
+    try {
+      const response = await fetch(`/api/skill-creator/${conversationId}/session`);
+      const payload = (await response.json()) as {
+        session?: { state: string; draft: Partial<SkillDraft> | null } | null;
+        error?: string;
+      };
+      if (!response.ok || !payload.session) {
+        setSkillCreatorPreview({ draft: null, status: null });
+        return;
+      }
+      applySkillCreatorSession(
+        payload.session.state as "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled",
+        payload.session.draft ?? null,
+        ""
+      );
+    } catch {
+      setSkillCreatorPreview({ draft: null, status: null });
+    }
+  }
+
   function applyAgentCreatorSession(
     state: "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled",
     draft: Partial<AgentDraft> | null,
@@ -372,6 +406,23 @@ export function AppShell() {
     }
     if (state === "cancelled") {
       setAgentCreatorPreview({ draft: null, status: null });
+    }
+  }
+
+  function applySkillCreatorSession(
+    state: "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled",
+    draft: Partial<SkillDraft> | null,
+    _lastSummary: string
+  ) {
+    if (state === "preview" || state === "saving" || state === "done") {
+      if (!draft) {
+        return;
+      }
+      setSkillCreatorPreview({ draft: draft as SkillDraft, status: state });
+      return;
+    }
+    if (state === "cancelled") {
+      setSkillCreatorPreview({ draft: null, status: null });
     }
   }
 
@@ -424,6 +475,63 @@ export function AppShell() {
     setAgentCreatorPreview({ draft: null, status: null });
     try {
       await fetch(`/api/agent-creator/${activeConversationId}/cancel`, {
+        method: "POST"
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  async function saveSkillCreator() {
+    if (!activeConversationId) return;
+    setSkillCreatorPreview((current) => ({ ...current, status: "saving", error: undefined }));
+    try {
+      const response = await fetch(`/api/skill-creator/${activeConversationId}/save`, {
+        method: "POST"
+      });
+      const payload = (await response.json()) as { result?: { kind: string }; error?: string };
+      if (!response.ok) {
+        const message = payload.error ?? "保存失败。";
+        setSkillCreatorPreview((current) => ({ ...current, status: "error", error: message }));
+        return;
+      }
+      if (payload.result?.kind === "saved") {
+        setSkillCreatorPreview((current) => ({ ...current, status: "done" }));
+        void loadConversations();
+        return;
+      }
+      if (payload.result?.kind === "error") {
+        const message = (payload.result as { error?: string }).error ?? "保存失败。";
+        setSkillCreatorPreview((current) => ({ ...current, status: "error", error: message }));
+      }
+    } catch (saveError) {
+      setSkillCreatorPreview((current) => ({
+        ...current,
+        status: "error",
+        error: saveError instanceof Error ? saveError.message : "保存失败。"
+      }));
+    }
+  }
+
+  async function regenerateSkillCreator() {
+    if (!activeConversationId) return;
+    setSkillCreatorPreview({ draft: null, status: null });
+    try {
+      await fetch(`/api/skill-creator/${activeConversationId}/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  async function cancelSkillCreatorSession() {
+    if (!activeConversationId) return;
+    setSkillCreatorPreview({ draft: null, status: null });
+    try {
+      await fetch(`/api/skill-creator/${activeConversationId}/cancel`, {
         method: "POST"
       });
     } catch {
@@ -774,6 +882,9 @@ export function AppShell() {
           onAgentCreatorCancel={cancelAgentCreatorSession}
           onAgentCreatorRegenerate={regenerateAgentCreator}
           onAgentCreatorSave={saveAgentCreator}
+          onSkillCreatorCancel={cancelSkillCreatorSession}
+          onSkillCreatorRegenerate={regenerateSkillCreator}
+          onSkillCreatorSave={saveSkillCreator}
           onLoadMore={() => {
             if (activeConversationId) {
               void loadMoreMessages(activeConversationId);
@@ -788,6 +899,7 @@ export function AppShell() {
             setContextMode((value) => (value === "terminal" ? "context" : "terminal"));
           }}
           roster={roster}
+          skillCreatorPreview={skillCreatorPreview}
           view={view}
         />
         <Composer

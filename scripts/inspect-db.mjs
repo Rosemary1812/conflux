@@ -95,6 +95,15 @@ seedAgent.run({
   now
 });
 
+seedAgent.run({
+  id: "skill_creator_system",
+  slug: "skill-creator",
+  name: "Skill Creator",
+  platform: "claude_code",
+  description: "Conflux built-in /skill-creator workflow. Carries Choice cards for conversational Skill creation.",
+  now
+});
+
 for (const table of ["agents", "skills", "agent_skills"]) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all();
   const exists = columns.length > 0;

@@ -5,6 +5,8 @@ import { agents, skills } from "@/lib/db/schema";
 
 export const AGENT_CREATOR_SYSTEM_AGENT_ID = "agent_creator_system";
 export const AGENT_CREATOR_SYSTEM_AGENT_SLUG = "agent-creator";
+export const SKILL_CREATOR_SYSTEM_AGENT_ID = "skill_creator_system";
+export const SKILL_CREATOR_SYSTEM_AGENT_SLUG = "skill-creator";
 
 const builtinAgents = [
   {
@@ -41,6 +43,13 @@ const builtinAgents = [
     name: "Agent Creator",
     platform: "claude_code",
     description: "Conflux built-in /agent-creator workflow. Carries Choice cards for the guided Agent creation flow."
+  },
+  {
+    id: SKILL_CREATOR_SYSTEM_AGENT_ID,
+    slug: SKILL_CREATOR_SYSTEM_AGENT_SLUG,
+    name: "Skill Creator",
+    platform: "claude_code",
+    description: "Conflux built-in /skill-creator workflow. Carries Choice cards for conversational Skill creation."
   }
 ] as const;
 

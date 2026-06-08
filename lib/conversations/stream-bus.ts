@@ -1,6 +1,7 @@
 import type { AgentInteraction, InteractionDecision, InteractionStatus } from "@/lib/interactions/types";
 import type { MockMessage } from "@/lib/conversations/types";
 import type { AgentDraft } from "@/lib/skills/agent-creator/types";
+import type { SkillDraft } from "@/lib/skills/skill-creator/types";
 
 export type ConversationStreamEvent =
   | {
@@ -67,6 +68,13 @@ export type ConversationStreamEvent =
       conversationId: string;
       state: "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled";
       draft: Partial<AgentDraft> | null;
+      lastSummary: string;
+    }
+  | {
+      type: "skill_creator_session";
+      conversationId: string;
+      state: "collecting" | "confirm_build" | "preview" | "saving" | "done" | "cancelled";
+      draft: Partial<SkillDraft> | null;
       lastSummary: string;
     };
 

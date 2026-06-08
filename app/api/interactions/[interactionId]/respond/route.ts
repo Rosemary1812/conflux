@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db/client";
 import { agentInteractions } from "@/lib/db/schema";
 import { InteractionError, resolveInteraction } from "@/lib/interactions/service";
 import { continueAgentCreatorAfterChoice, isAgentCreatorInteraction } from "@/lib/skills/agent-creator/runner";
+import { continueSkillCreatorAfterChoice, isSkillCreatorInteraction } from "@/lib/skills/skill-creator/runner";
 import type { InteractionDecision } from "@/lib/interactions/types";
 
 export const runtime = "nodejs";
@@ -52,6 +53,48 @@ export async function POST(request: Request, context: RouteContext) {
       }
 
       // 标 interaction 为 answered，模拟 V1.5 resolveInteraction 的副作用
+      const now = Date.now();
+      getDb()
+        .update(agentInteractions)
+        .set({
+          status: "answered",
+          responseJson: JSON.stringify(body),
+          resolvedAt: now
+        })
+        .where(eq(agentInteractions.id, interactionId))
+        .run();
+
+      return NextResponse.json({
+        interaction: {
+          id: interactionId,
+          status: "answered",
+          response: body
+        },
+        result
+      });
+    }
+
+    if (isSkillCreatorInteraction(row.agentId)) {
+      if (body.kind !== "choice") {
+        return NextResponse.json({ error: "Skill Creator 仅支持 choice 回应。" }, { status: 400 });
+      }
+
+      const result = await continueSkillCreatorAfterChoice({
+        conversationId: row.conversationId,
+        interactionId,
+        decision: {
+          selectedOptionIds: body.selectedOptionIds,
+          customText: body.customText
+        }
+      });
+
+      if (result.kind === "ignored") {
+        return NextResponse.json({ error: result.reason }, { status: 409 });
+      }
+      if (result.kind === "error") {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+
       const now = Date.now();
       getDb()
         .update(agentInteractions)

@@ -22,6 +22,15 @@
 
 ## 已做
 
+- 时间：2026-06-08
+  优先级：P1
+  所属范围：V3.3 / Skill Creator + Agent Creator
+  问题/目标：第一次触发 `/skill-creator` 或 `/agent-creator` 时，用户的自然语言描述没有写入 session.history，导致 LLM Planner 看到的 `userInput` 是空字符串，助手回复"当前没有用户输入，也没有任何对话历史，无法生成 Skill 草稿的任何字段"，用户必须再多发一条消息才能看到正常草稿。根因：`lib/skills/skill-creator/runner.ts:69-73` 与 `lib/skills/agent-creator/runner.ts:77-83` 在"创建新 session"分支直接 `createSession()` 而没把首条 `text` 喂进 history。
+  解决方案：两个 runner 都改成 `applyUserInput(createSession({...}), text)`，让首次输入也走 `applyUserInput` 的 history 追加路径。
+  涉及修改文件：`lib/skills/skill-creator/runner.ts`、`lib/skills/agent-creator/runner.ts`
+  验收标准：`/skill-creator` 首次调用即生成完整草稿（已在单聊中实测：PRD 总结器 / prd-summarizer 一次性补齐 4 字段并进入 `confirm_build`），`/agent-creator` 同源修复；`npx tsc --noEmit` 通过；端到端跑通 create → LLM 抽取 → Choice 确认 → 预览 → 保存 → `skills` 表新增 `kind='user'` 行 → `/api/skills` 列表可见新命令。
+  完成时间：2026-06-08
+
 - 时间：2026-06-06
   优先级：P1
   所属范围：DB / 迁移

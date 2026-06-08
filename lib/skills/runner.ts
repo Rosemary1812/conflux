@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { conversations, messages } from "@/lib/db/schema";
 import { getSkillBySlug } from "@/lib/skills/registry";
 import { runAgentCreator } from "@/lib/skills/agent-creator/runner";
+import { runSkillCreator } from "@/lib/skills/skill-creator/runner";
 
 export function runSkill({
   slug,
@@ -41,6 +42,26 @@ export function runSkill({
         );
       } else if (result.kind === "cancelled") {
         appendAssistant(conversationId, "Agent Creator 已取消。");
+      }
+    });
+    return { handled: true as const };
+  }
+
+  if (slug === "skill-creator") {
+    void runSkillCreator({
+      conversationId,
+      userMessageId,
+      text: input
+    }).then((result) => {
+      if (result.kind === "ignored") {
+        appendAssistant(
+          conversationId,
+          `/skill-creator 当前无法启动：${result.reason}。\n提示：本 Phase 仅在单聊工作；如需创建 Skill，请先在单聊中调起。`
+        );
+      } else if (result.kind === "error") {
+        appendAssistant(conversationId, `Skill Creator 暂时遇到问题：${result.error}`);
+      } else if (result.kind === "cancelled") {
+        appendAssistant(conversationId, "Skill Creator 已取消。");
       }
     });
     return { handled: true as const };

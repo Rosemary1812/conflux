@@ -5,12 +5,20 @@ import { useCallback, useEffect, useRef } from "react";
 import { AgentCreatorPreviewCard } from "@/components/chat/AgentCreatorPreviewCard";
 import { ConversationSetup } from "@/components/chat/ConversationSetup";
 import { MessageBubble } from "@/components/chat/MessageBubble";
+import { SkillCreatorPreviewCard } from "@/components/chat/SkillCreatorPreviewCard";
 import type { ConversationSummary, ConversationView, MockMessage, RosterItem } from "@/lib/conversations/types";
 import type { InteractionDecision } from "@/lib/interactions/types";
 import type { AgentDraft } from "@/lib/skills/agent-creator/types";
+import type { SkillDraft } from "@/lib/skills/skill-creator/types";
 
 type AgentCreatorPreviewState = {
   draft: AgentDraft | null;
+  status: "preview" | "saving" | "done" | "error" | null;
+  error?: string;
+};
+
+type SkillCreatorPreviewState = {
+  draft: SkillDraft | null;
   status: "preview" | "saving" | "done" | "error" | null;
   error?: string;
 };
@@ -28,6 +36,9 @@ type MessageStreamProps = {
   onAgentCreatorCancel?: () => Promise<void>;
   onAgentCreatorRegenerate?: () => Promise<void>;
   onAgentCreatorSave?: () => Promise<void>;
+  onSkillCreatorCancel?: () => Promise<void>;
+  onSkillCreatorRegenerate?: () => Promise<void>;
+  onSkillCreatorSave?: () => Promise<void>;
   onLoadMore?: () => void;
   onRegenerate?: (messageId: string) => Promise<void>;
   onRespondInteraction?: (interactionId: string, decision: InteractionDecision) => Promise<void>;
@@ -35,6 +46,7 @@ type MessageStreamProps = {
   onToggleContext: () => void;
   onToggleTerminal: () => void;
   roster?: RosterItem[];
+  skillCreatorPreview?: SkillCreatorPreviewState;
   view: ConversationView;
 };
 
@@ -51,6 +63,9 @@ export function MessageStream({
   onAgentCreatorCancel,
   onAgentCreatorRegenerate,
   onAgentCreatorSave,
+  onSkillCreatorCancel,
+  onSkillCreatorRegenerate,
+  onSkillCreatorSave,
   onLoadMore,
   onRegenerate,
   onRespondInteraction,
@@ -58,6 +73,7 @@ export function MessageStream({
   onToggleContext,
   onToggleTerminal,
   roster,
+  skillCreatorPreview,
   view
 }: MessageStreamProps) {
   const isGroup = view === "group" || view === "new-group";
@@ -163,6 +179,17 @@ export function MessageStream({
                 onRegenerate={() => onAgentCreatorRegenerate?.()}
                 onSave={() => onAgentCreatorSave?.()}
                 status={agentCreatorPreview.status === "error" ? "error" : agentCreatorPreview.status}
+              />
+            ) : null}
+            {skillCreatorPreview?.draft && skillCreatorPreview.status ? (
+              <SkillCreatorPreviewCard
+                draft={skillCreatorPreview.draft}
+                error={skillCreatorPreview.error}
+                key="skill-creator-preview"
+                onCancel={() => onSkillCreatorCancel?.()}
+                onRegenerate={() => onSkillCreatorRegenerate?.()}
+                onSave={() => onSkillCreatorSave?.()}
+                status={skillCreatorPreview.status === "error" ? "error" : skillCreatorPreview.status}
               />
             ) : null}
           </div>
