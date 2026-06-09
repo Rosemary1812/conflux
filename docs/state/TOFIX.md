@@ -28,6 +28,14 @@
   涉及修改文件：环境层（待定）
   验收标准：`npm run build` 在不绕过本机 Application Data symlink 的情况下通过；C1/V3.7 已提交的代码不被本问题影响。
 
+- 时间：2026-06-09
+  优先级：P1
+  所属范围：Orchestrator / Planner task id 唯一性
+  问题/目标：V3.7 C3 E2E 跑群聊时，`lib/orchestrator/service.ts:309-322` 抛 `SqliteError: UNIQUE constraint failed: orchestrator_tasks.id`。根因：`lib/orchestrator/planner.ts:253` 接受 Planner LLM 给的任意 `id` 字符串（`String(task.id || crypto.randomUUID())`），LLM 大概率按 SYSTEM_PROMPT 示例给 `task_1` / `task_2` / `task_3` 这类 deterministic 短 id；只要同一 LLM 在历史对话里产生过同名 id，第二次 executePlan 必撞 PK，`processGroupMessage` 抛错，`messages.run = null`，整条群聊 run 链断在 Orchestrator 阶段，根本到不了 `invokeAgentForTask` / SDK adapter / Approval 桥接。**该 bug 与 V3.7 桥接无关，但阻塞 V3.7 C3 端到端验证**。
+  解决方案：先在 `lib/orchestrator/service.ts:309-322` 改 `id: task.id` → `id: crypto.randomUUID()`（保留 `task.id` 作为 `originalId` 字段或保留给 `dependsOn` 解析用），让 task id 在 Orchestrator 服务端强制唯一，Planner 输出只用于人类可读引用；后续可考虑在 `planner.ts:253` 同时鼓励 LLM 输出 uuid，但服务端兜底必须保留。不要在 V3.7 范围顺手改；这属于 Orchestrator 路径上的独立 bug。
+  涉及修改文件：`lib/orchestrator/service.ts`（task 插入处）、可选 `lib/orchestrator/planner.ts`（prompt 鼓励 uuid）
+  验收标准：连续两次 sendMessage 同类 implement_review plan 不再撞 PK；`agent_runs.status` 在群聊 run 路径下能正确进入 `running` → `done`；`scripts/smoke-v37-c3-e2e.mjs` 跑出 `interaction_requested` 事件 + `POST respond` 后 message 进入 `done`；`npm run typecheck` 通过。
+
 ## 已做
 
 - 时间：2026-06-08
