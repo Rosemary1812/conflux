@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "@/lib/db/client";
-import { agents, artifacts, conversationAgents, conversations, messageAttachments, messages, orchestratorTasks } from "@/lib/db/schema";
+import { agents, agentRuns, artifacts, conversationAgents, conversations, messageAttachments, messages, orchestratorTasks } from "@/lib/db/schema";
 import {
   parseAgentAliasMentions,
   parseAgentMentions,
@@ -10,7 +10,7 @@ import {
   slugFor
 } from "@/lib/agents/mention";
 import { parseCapabilitiesJson } from "@/lib/agents/avatar-schema";
-import type { AgentAvatarKind, AvailableAgentSummary } from "@/lib/agents/types";
+import type { AgentAvatarKind, AvailableAgentSummary, SelfBuiltAgentListItem } from "@/lib/agents/types";
 import type { AdapterAttachment } from "@/lib/adapters/types";
 import type { AgentSummary } from "@/lib/agents/types";
 import type { ConversationMode, ConversationSummary, MockMessage } from "@/lib/conversations/types";
@@ -75,6 +75,62 @@ export function listAvailableAgents(options: { conversationMode?: ConversationMo
     .orderBy(asc(agents.name))
     .all()
     .map(toAvailableAgentSummary);
+}
+
+const SYSTEM_PROMPT_SUMMARY_LENGTH = 80;
+const TERMINAL_RUN_STATUSES = ["done", "error", "cancelled"] as const;
+
+export function listSelfBuiltAgents(): SelfBuiltAgentListItem[] {
+  const rows = getDb()
+    .select()
+    .from(agents)
+    .where(eq(agents.isSystem, false))
+    .orderBy(desc(agents.updatedAt))
+    .all();
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const agentIds = rows.map((row) => row.id);
+  const finishedRuns = getDb()
+    .select({
+      id: agentRuns.id,
+      agentId: agentRuns.agentId,
+      conversationId: agentRuns.conversationId,
+      status: agentRuns.status,
+      finishedAt: agentRuns.finishedAt
+    })
+    .from(agentRuns)
+    .where(inArray(agentRuns.agentId, agentIds))
+    .all()
+    .filter((run): run is typeof run & { finishedAt: number; status: typeof TERMINAL_RUN_STATUSES[number] } =>
+      Boolean(run.finishedAt) && (TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)
+    );
+
+  const lastRunByAgent = new Map<string, { runId: string; conversationId: string; finishedAt: number; status: "done" | "error" | "cancelled" }>();
+  for (const run of finishedRuns) {
+    const existing = lastRunByAgent.get(run.agentId);
+    if (!existing || run.finishedAt > existing.finishedAt) {
+      lastRunByAgent.set(run.agentId, {
+        runId: run.id,
+        conversationId: run.conversationId,
+        finishedAt: run.finishedAt,
+        status: run.status
+      });
+    }
+  }
+
+  return rows.map((row) => {
+    const summary = toAvailableAgentSummary(row);
+    return {
+      ...summary,
+      systemPromptSummary: row.systemPrompt.slice(0, SYSTEM_PROMPT_SUMMARY_LENGTH),
+      lastRun: lastRunByAgent.get(row.id) ?? null,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    };
+  });
 }
 
 export function createConversation(input: CreateConversationInput = {}) {

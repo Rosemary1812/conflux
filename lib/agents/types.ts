@@ -25,3 +25,15 @@ export type AvailableAgentSummary = {
   avatarValue: string;
   capabilities: string[] | null;
 };
+
+export type SelfBuiltAgentListItem = AvailableAgentSummary & {
+  systemPromptSummary: string;
+  lastRun: {
+    runId: string;
+    conversationId: string;
+    finishedAt: number;
+    status: "done" | "error" | "cancelled";
+  } | null;
+  createdAt: number;
+  updatedAt: number;
+};
