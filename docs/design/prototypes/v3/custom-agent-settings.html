@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conflux · V3.6 自定义 Agent 设置页</title>
+  <style>
+    :root {
+      --primary: #156f72;
+      --primary-soft: #e6f4f3;
+      --blue: #2f6fed;
+      --blue-soft: rgba(47, 111, 237, 0.12);
+      --red: #d04545;
+      --red-soft: rgba(208, 69, 69, 0.12);
+      --amber: #b97a18;
+      --amber-soft: rgba(185, 122, 24, 0.12);
+      --bg-app: #f2f4f7;
+      --bg-panel: #ffffff;
+      --bg-subtle: #f7f8fa;
+      --bg-input: #f4f6f8;
+      --text-1: #1e242c;
+      --text-2: #5c6673;
+      --text-3: #87919f;
+      --border: rgba(96, 111, 128, 0.24);
+      --border-light: rgba(96, 111, 128, 0.14);
+      --green: #248a5f;
+      --shadow-sm: 0 1px 3px rgba(25, 35, 45, 0.1);
+      --shadow-md: 0 6px 24px rgba(25, 35, 45, 0.16);
+      --font: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "SF Mono", "Cascadia Mono", Consolas, "Roboto Mono", monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font);
+      color: var(--text-1);
+      background: var(--bg-app);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+      padding: 56px 24px 24px;
+    }
+
+    /* ─── Top demo bar ─── */
+    .demo-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; padding: 10px 18px;
+      background: #1e242c; color: #edf0f5; font-size: 13px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+    }
+    .demo-bar strong { font-size: 14px; }
+    .demo-note { color: #acb2bd; font-size: 12px; }
+
+    /* ─── Backdrop + modal ─── */
+    .backdrop {
+      position: fixed; inset: 56px 0 0 0; z-index: 50;
+      background: rgba(25, 35, 45, 0.45);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 32px 16px; overflow: auto;
+    }
+    .modal {
+      width: min(960px, 100%);
+      background: var(--bg-panel);
+      border: 1px solid var(--border-light);
+      border-radius: 16px;
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+    }
+    .modal-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border-light);
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg-subtle);
+    }
+    .modal-header h2 { font-size: 16px; }
+    .modal-header p { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+    .icon-button {
+      width: 30px; height: 30px; border-radius: 8px;
+      border: none; background: transparent; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text-2);
+    }
+    .icon-button:hover { background: var(--bg-input); color: var(--text-1); }
+
+    /* ─── Side nav + main ─── */
+    .modal-body {
+      display: grid; grid-template-columns: 168px 1fr;
+      min-height: 540px;
+    }
+    .side-nav {
+      border-right: 1px solid var(--border-light);
+      padding: 12px 8px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .side-nav button {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 8px;
+      border: none; background: transparent;
+      font-size: 13px; color: var(--text-2);
+      text-align: left; cursor: pointer;
+      font-family: inherit;
+    }
+    .side-nav button:hover { background: var(--bg-subtle); color: var(--text-1); }
+    .side-nav button.active {
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .side-nav svg { flex-shrink: 0; }
+    .main {
+      padding: 20px 24px 28px;
+      overflow: auto;
+      max-height: 600px;
+    }
+    .main h3 { font-size: 15px; margin-bottom: 4px; }
+    .main .desc { color: var(--text-3); font-size: 12px; margin-bottom: 16px; }
+
+    /* ─── List view ─── */
+    .list-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-light);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .list-card-head {
+      padding: 10px 14px;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; color: var(--text-3);
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg-subtle);
+    }
+    .custom-agent-row {
+      display: grid;
+      grid-template-columns: 40px 1fr auto;
+      gap: 12px; align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-light);
+      cursor: pointer;
+    }
+    .custom-agent-row:last-child { border-bottom: none; }
+    .custom-agent-row:hover { background: var(--bg-subtle); }
+    .custom-agent-row.highlighted { background: var(--primary-soft); }
+    .row-avatar {
+      width: 36px; height: 36px; border-radius: 999px;
+      border: 1px solid var(--border-light);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 18px; background: var(--bg-panel);
+      overflow: hidden;
+    }
+    .row-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .row-main { min-width: 0; }
+    .row-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .row-title .alias { color: var(--text-3); font-weight: 400; font-size: 12px; }
+    .row-cap-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .capability-tag {
+      border: 1px solid var(--border-light);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 10px;
+      color: var(--text-2);
+      background: var(--bg-input);
+    }
+    .row-meta {
+      color: var(--text-3); font-size: 11px; text-align: right;
+    }
+    .row-meta .label { color: var(--text-3); display: block; }
+    .row-meta .value { color: var(--text-2); }
+    .badge-active {
+      display: inline-block;
+      padding: 1px 8px; border-radius: 4px;
+      font-size: 10px; font-weight: 600;
+      background: var(--green);
+      color: white;
+    }
+    .badge-idle {
+      display: inline-block;
+      padding: 1px 8px; border-radius: 4px;
+      font-size: 10px; font-weight: 600;
+      background: var(--bg-input);
+      color: var(--text-3);
+    }
+    .empty-state {
+      padding: 40px 24px; text-align: center; color: var(--text-3);
+    }
+    .empty-state h4 { color: var(--text-1); font-size: 14px; margin-bottom: 6px; }
+    .empty-state code {
+      display: inline-block; margin-top: 8px;
+      padding: 2px 8px; border-radius: 4px;
+      background: var(--bg-input); font-family: var(--font-mono);
+      font-size: 12px; color: var(--text-2);
+    }
+
+    /* ─── Detail view ─── */
+    .detail-bar {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--text-3);
+      margin-bottom: 14px;
+    }
+    .detail-bar a { color: var(--text-2); text-decoration: none; cursor: pointer; }
+    .detail-bar a:hover { color: var(--text-1); }
+
+    .detail-head {
+      display: flex; align-items: center; gap: 12px;
+      padding-bottom: 16px; border-bottom: 1px solid var(--border-light);
+      margin-bottom: 18px;
+    }
+    .detail-head .row-avatar { width: 48px; height: 48px; font-size: 24px; }
+    .detail-head h4 { font-size: 16px; }
+    .detail-head .alias { color: var(--text-3); font-size: 12px; margin-top: 2px; }
+
+    .detail-section { margin-bottom: 18px; }
+    .detail-section h5 {
+      font-size: 11px; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 6px; font-weight: 600;
+    }
+    .detail-section .body-text {
+      background: var(--bg-input); padding: 10px 12px;
+      border-radius: 6px; font-size: 13px; line-height: 1.6;
+    }
+    .detail-section pre {
+      background: var(--bg-input); padding: 10px 12px;
+      border-radius: 6px; font-family: var(--font-mono);
+      font-size: 12px; white-space: pre-wrap; word-break: break-word;
+      line-height: 1.55; max-height: 110px; overflow: hidden;
+    }
+    .field-row {
+      display: flex; gap: 18px; font-size: 13px;
+    }
+    .field-row .label { color: var(--text-3); margin-right: 4px; }
+    .field-row .value { color: var(--text-1); font-weight: 500; }
+
+    .detail-actions {
+      display: flex; gap: 10px; align-items: center;
+      padding-top: 16px; border-top: 1px solid var(--border-light);
+    }
+    .danger-zone {
+      margin-top: 20px; padding: 14px 16px;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+    }
+    .danger-zone h6 {
+      font-size: 12px; color: var(--red);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 6px; font-weight: 700;
+    }
+    .danger-zone p { font-size: 12px; color: var(--text-2); margin-bottom: 10px; }
+
+    /* ─── Buttons ─── */
+    .btn {
+      padding: 7px 14px; border-radius: 6px;
+      font-size: 13px; font-weight: 500;
+      border: 1px solid var(--border);
+      background: var(--bg-panel); color: var(--text-1);
+      cursor: pointer; font-family: inherit;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn:hover { background: var(--bg-subtle); }
+    .btn.primary {
+      background: var(--primary); color: white; border-color: var(--primary);
+    }
+    .btn.primary:hover { background: #0e595c; }
+    .btn.danger {
+      background: var(--red); color: white; border-color: var(--red);
+    }
+    .btn.danger:hover { background: #b73b3b; }
+    .btn.danger[disabled] {
+      background: var(--bg-input); color: var(--text-3); border-color: var(--border-light);
+      cursor: not-allowed;
+    }
+    .btn.ghost {
+      background: transparent; border-color: transparent; color: var(--text-2);
+    }
+    .btn.ghost:hover { background: var(--bg-subtle); color: var(--text-1); }
+
+    /* ─── Edit view ─── */
+    .edit-form { display: flex; flex-direction: column; gap: 16px; }
+    .edit-form label {
+      display: block; font-size: 12px; color: var(--text-2);
+      font-weight: 500; margin-bottom: 6px;
+    }
+    .edit-form .required::after { content: " *"; color: var(--red); }
+    .edit-form input[type="text"],
+    .edit-form textarea,
+    .edit-form select {
+      width: 100%;
+      padding: 7px 10px; border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-panel);
+      font-size: 13px; font-family: inherit;
+      color: var(--text-1);
+    }
+    .edit-form input:focus, .edit-form textarea:focus, .edit-form select:focus {
+      outline: none; border-color: var(--blue);
+    }
+    .edit-form textarea { min-height: 96px; resize: vertical; }
+    .char-count { text-align: right; font-size: 11px; color: var(--text-3); margin-top: 3px; }
+    .field-hint { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+    .field-hint.warn { color: var(--amber); }
+    .field-row-2 {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    .field-error { font-size: 11px; color: var(--red); margin-top: 4px; }
+
+    .avatar-picker {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      background: var(--bg-subtle);
+    }
+    .avatar-picker .row-avatar { width: 48px; height: 48px; font-size: 24px; }
+    .avatar-picker .info { flex: 1; min-width: 0; }
+    .avatar-picker .info strong { font-size: 13px; }
+    .avatar-picker .info small { display: block; color: var(--text-3); font-size: 11px; margin-top: 2px; }
+
+    .capability-tag-editor {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--bg-panel);
+      min-height: 38px;
+    }
+    .capability-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      border: 1px solid var(--border-light);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--text-1);
+      background: var(--bg-input);
+    }
+    .capability-tag-remove {
+      cursor: pointer; opacity: 0.6; font-size: 13px; line-height: 1;
+    }
+    .capability-tag-remove:hover { opacity: 1; color: var(--red); }
+    .capability-tag-input {
+      flex: 1; min-width: 100px; border: none; background: transparent;
+      outline: none; font-size: 12px; font-family: inherit;
+    }
+    .profile-danger select {
+      border-color: var(--red); background: var(--red-soft);
+    }
+    .profile-danger-hint {
+      font-size: 11px; color: var(--red); margin-top: 4px;
+      display: flex; align-items: center; gap: 4px;
+    }
+
+    .form-actions {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-top: 12px; border-top: 1px solid var(--border-light);
+    }
+
+    .regen-block {
+      padding: 12px 14px;
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      background: var(--bg-subtle);
+    }
+    .regen-block h6 { font-size: 12px; color: var(--text-1); margin-bottom: 6px; }
+    .regen-block p { font-size: 11px; color: var(--text-3); margin-bottom: 8px; }
+    .regen-block textarea { min-height: 56px; }
+
+    /* ─── Regenerating spinner overlay ─── */
+    .regen-overlay {
+      position: absolute; inset: 0;
+      background: rgba(255, 255, 255, 0.78);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; z-index: 5;
+      border-radius: 12px;
+    }
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid var(--border-light);
+      border-top-color: var(--blue);
+      border-radius: 999px;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .regen-overlay .msg { font-size: 13px; color: var(--text-2); }
+
+    /* ─── Delete confirm overlay ─── */
+    .confirm-backdrop {
+      position: fixed; inset: 0; z-index: 80;
+      background: rgba(25, 35, 45, 0.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .confirm {
+      width: min(420px, calc(100% - 32px));
+      background: var(--bg-panel);
+      border-radius: 12px;
+      box-shadow: var(--shadow-md);
+      padding: 22px 24px 18px;
+    }
+    .confirm h4 { font-size: 15px; margin-bottom: 12px; }
+    .confirm p { font-size: 13px; color: var(--text-2); margin-bottom: 10px; line-height: 1.6; }
+    .confirm .roster-list {
+      list-style: none; padding: 0; margin: 0 0 12px;
+      background: var(--bg-subtle); border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .confirm .roster-list li {
+      font-size: 12px; color: var(--text-2);
+      padding: 2px 0;
+    }
+    .confirm .roster-list li .count {
+      color: var(--text-3); margin-left: 4px;
+    }
+    .confirm .warn { color: var(--red); font-weight: 600; }
+    .confirm-actions {
+      display: flex; justify-content: flex-end; gap: 10px;
+      margin-top: 18px;
+    }
+
+    /* ─── Precheck disabled tooltip ─── */
+    .delete-btn-wrap { position: relative; display: inline-block; }
+    .tooltip {
+      position: absolute; bottom: calc(100% + 6px); right: 0;
+      background: var(--text-1); color: white;
+      padding: 6px 10px; border-radius: 6px;
+      font-size: 11px; white-space: nowrap;
+      box-shadow: var(--shadow-sm);
+      z-index: 10;
+    }
+    .tooltip::after {
+      content: ""; position: absolute; top: 100%; right: 16px;
+      border: 4px solid transparent; border-top-color: var(--text-1);
+    }
+
+    /* ─── Section divider / legend ─── */
+    .compare {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 18px; max-width: 1240px; margin: 24px auto 0;
+    }
+    .compare .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-light);
+      border-radius: 14px;
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+    .compare .panel-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg-subtle);
+      font-size: 12px; font-weight: 600;
+    }
+    .compare .panel-body { padding: 14px 16px; }
+    .compare .panel-body .desc { font-size: 11px; color: var(--text-3); margin-bottom: 8px; }
+    .compare ul { padding-left: 18px; font-size: 12px; color: var(--text-2); line-height: 1.8; }
+    .compare code {
+      background: var(--bg-input); padding: 1px 6px; border-radius: 3px;
+      font-family: var(--font-mono); font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="demo-bar">
+    <strong>Conflux · V3.6 自定义 Agent 设置页</strong>
+    <span class="demo-note">静态原型 · 不接真 API · 600 × 920 · 5 个视图</span>
+  </div>
+
+  <!-- 主视图：列表 -->
+  <div class="backdrop" id="view-list">
+    <div class="modal" role="dialog">
+      <div class="modal-header">
+        <div>
+          <h2>设置</h2>
+          <p>从左下角设置按钮弹出，不作为独立业务路由。</p>
+        </div>
+        <button class="icon-button" aria-label="关闭">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <nav class="side-nav">
+          <button>外观与语言</button>
+          <button>本机 Agent 连接</button>
+          <button>Orchestrator</button>
+          <button>Provider 与密钥</button>
+          <button>Skill 管理</button>
+          <button class="active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            自建 Agent
+          </button>
+        </nav>
+
+        <div class="main">
+          <h3>自建 Agent</h3>
+          <p class="desc">共 3 个 · 在单聊用 <code>/agent-creator</code> 创建新的。</p>
+
+          <div class="list-card">
+            <div class="list-card-head">
+              <span>所有自建 Agent（按更新时间倒序）</span>
+              <span>3 个</span>
+            </div>
+
+            <div class="custom-agent-row">
+              <div class="row-avatar">🤖</div>
+              <div class="row-main">
+                <div class="row-title">
+                  React 助手 <span class="alias">@react-helper</span>
+                  <span class="badge-active">活跃</span>
+                </div>
+                <div class="row-cap-tags">
+                  <span class="capability-tag">代码修改</span>
+                  <span class="capability-tag">测试补充</span>
+                  <span class="capability-tag">文档更新</span>
+                </div>
+              </div>
+              <div class="row-meta">
+                <span class="label">最后运行</span>
+                <span class="value">2 小时前</span>
+                <span class="label">群聊 PRD Reviewer</span>
+              </div>
+            </div>
+
+            <div class="custom-agent-row">
+              <div class="row-avatar">📄</div>
+              <div class="row-main">
+                <div class="row-title">
+                  Doc Reviewer <span class="alias">@doc-reviewer</span>
+                  <span class="badge-idle">空闲</span>
+                </div>
+                <div class="row-cap-tags">
+                  <span class="capability-tag">只读审查</span>
+                  <span class="capability-tag">文档问答</span>
+                  <span class="capability-tag">引用路径</span>
+                </div>
+              </div>
+              <div class="row-meta">
+                <span class="label">最后运行</span>
+                <span class="value">3 天前</span>
+                <span class="label">群聊 产品文案</span>
+              </div>
+            </div>
+
+            <div class="custom-agent-row highlighted">
+              <div class="row-avatar">🤖</div>
+              <div class="row-main">
+                <div class="row-title">
+                  Smoke Test <span class="alias">@v34-real-smoke</span>
+                  <span class="badge-idle">空闲</span>
+                </div>
+                <div class="row-cap-tags">
+                  <span class="capability-tag">smoke</span>
+                  <span class="capability-tag">reply-ok</span>
+                </div>
+              </div>
+              <div class="row-meta">
+                <span class="label">最后运行</span>
+                <span class="value">刚刚</span>
+                <span class="label">V3.5 群聊 smoke</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-bar" style="margin-top: 18px;">
+            <span>↓ 高亮行 = 当前已选中，进入下方"详情视图"</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主视图：详情（含 precheck 失败 tooltip） -->
+  <div class="backdrop" id="view-detail" style="display: none;">
+    <div class="modal" role="dialog">
+      <div class="modal-header">
+        <div>
+          <h2>设置</h2>
+          <p>从左下角设置按钮弹出，不作为独立业务路由。</p>
+        </div>
+        <button class="icon-button" aria-label="关闭">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <nav class="side-nav">
+          <button>外观与语言</button>
+          <button>本机 Agent 连接</button>
+          <button>Orchestrator</button>
+          <button>Provider 与密钥</button>
+          <button>Skill 管理</button>
+          <button class="active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            自建 Agent
+          </button>
+        </nav>
+
+        <div class="main" style="position: relative;">
+          <div class="detail-bar">
+            <a>← 返回列表</a>
+            <span>·</span>
+            <span>React 助手</span>
+          </div>
+
+          <div class="detail-head">
+            <div class="row-avatar">🤖</div>
+            <div>
+              <h4>React 助手</h4>
+              <div class="alias">@react-helper · 平台 claude_code</div>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <h5>描述</h5>
+            <div class="body-text">负责 React 组件改造与测试补充。</div>
+          </div>
+
+          <div class="detail-section">
+            <h5>System Prompt（前 8000 字符）</h5>
+            <pre>你是 React 组件专家。优先给出可直接应用的 UI 代码修改。
+- 必须保留原有 props 接口
+- 优先使用项目内已有的样式变量（var(--primary) / var(--bg-panel) 等）
+- 改完代码请说明验证方式（手动跑哪个命令、点哪个按钮）</pre>
+          </div>
+
+          <div class="detail-section">
+            <div class="field-row">
+              <div><span class="label">权限：</span><span class="value">editable</span></div>
+              <div><span class="label">工具 profile：</span><span class="value">code-author</span></div>
+            </div>
+            <div class="field-row" style="margin-top: 8px;">
+              <div><span class="label">能力：</span></div>
+              <div class="row-cap-tags">
+                <span class="capability-tag">代码修改</span>
+                <span class="capability-tag">测试补充</span>
+                <span class="capability-tag">文档更新</span>
+                <span class="capability-tag">验证说明</span>
+              </div>
+            </div>
+            <div class="field-row" style="margin-top: 8px;">
+              <div><span class="label">头像：</span><span class="value">🤖 (emoji)</span></div>
+              <div><span class="label">仍出现在：</span><span class="value">2 个群聊的 roster 中</span></div>
+            </div>
+          </div>
+
+          <div class="detail-actions">
+            <button class="btn ghost">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+              重新生成 profile
+            </button>
+            <div style="flex: 1;"></div>
+            <button class="btn primary">编辑</button>
+          </div>
+
+          <div class="danger-zone">
+            <h6>删除（不可恢复）</h6>
+            <p>删除该 Agent 会清掉其全部 roster 引用；历史 run / 消息 / interaction 保留。</p>
+            <div class="delete-btn-wrap">
+              <button class="btn danger" disabled>🗑 删除自建 Agent</button>
+              <div class="tooltip">该 Agent 还有 1 个任务未完成，请先取消或等待。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主视图：编辑 -->
+  <div class="backdrop" id="view-edit" style="display: none;">
+    <div class="modal" role="dialog">
+      <div class="modal-header">
+        <div>
+          <h2>设置</h2>
+          <p>从左下角设置按钮弹出，不作为独立业务路由。</p>
+        </div>
+        <button class="icon-button" aria-label="关闭">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <nav class="side-nav">
+          <button>外观与语言</button>
+          <button>本机 Agent 连接</button>
+          <button>Orchestrator</button>
+          <button>Provider 与密钥</button>
+          <button>Skill 管理</button>
+          <button class="active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            自建 Agent
+          </button>
+        </nav>
+
+        <div class="main" style="position: relative;">
+          <div class="detail-bar">
+            <a>← 取消编辑</a>
+            <span>·</span>
+            <span>React 助手</span>
+          </div>
+
+          <form class="edit-form" onsubmit="return false;">
+
+            <div>
+              <label>头像</label>
+              <div class="avatar-picker">
+                <div class="row-avatar">🤖</div>
+                <div class="info">
+                  <strong>当前：emoji 🤖</strong>
+                  <small>点击更换可上传本地图片（≤ 1MB，png/jpg/webp/gif/svg）</small>
+                </div>
+                <button class="btn" type="button">更换头像</button>
+              </div>
+            </div>
+
+            <div>
+              <label class="required">名称</label>
+              <input type="text" value="React 助手" />
+            </div>
+
+            <div>
+              <label class="required">Alias（@mention 名字，单聊/群聊用）</label>
+              <input type="text" value="react-helper" />
+              <div class="field-hint warn">⚠️ alias 改名只影响新建 @ 提及；历史 conversation_agents 行的 alias 保留。</div>
+            </div>
+
+            <div>
+              <label class="required">描述</label>
+              <input type="text" value="负责 React 组件改造与测试补充。" />
+            </div>
+
+            <div>
+              <label class="required">System Prompt（8000 字符上限）</label>
+              <textarea>你是 React 组件专家。优先给出可直接应用的 UI 代码修改。
+- 必须保留原有 props 接口
+- 优先使用项目内已有的样式变量（var(--primary) / var(--bg-panel) 等）
+- 改完代码请说明验证方式（手动跑哪个命令、点哪个按钮）</textarea>
+              <div class="char-count">128 / 8000</div>
+            </div>
+
+            <div class="field-row-2">
+              <div>
+                <label>权限</label>
+                <select>
+                  <option>readonly</option>
+                  <option selected>editable</option>
+                </select>
+              </div>
+              <div>
+                <label>工具 profile</label>
+                <select>
+                  <option>readonly · 只读审查</option>
+                  <option selected>code-author · 可读写</option>
+                  <option>executor · 全权限执行</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label>能力标签（≤ 8 个，每项 ≤ 24 字符）</label>
+              <div class="capability-tag-editor">
+                <span class="capability-tag">代码修改 <span class="capability-tag-remove">×</span></span>
+                <span class="capability-tag">测试补充 <span class="capability-tag-remove">×</span></span>
+                <span class="capability-tag">文档更新 <span class="capability-tag-remove">×</span></span>
+                <span class="capability-tag">验证说明 <span class="capability-tag-remove">×</span></span>
+                <input class="capability-tag-input" placeholder="输入新标签后回车..." />
+              </div>
+            </div>
+
+            <div class="regen-block">
+              <h6>重新生成 profile（LLM 用当前字段 + 可选说明）</h6>
+              <p>不持久化 regen 会话；点击下方按钮触发一次 Planner LLM 调用，结果回填到上方表单。</p>
+              <textarea>（可选）例如：希望更聚焦 React 18 的并发特性。</textarea>
+              <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
+                <button class="btn" type="button">🔄 重新生成</button>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button class="btn ghost" type="button">取消</button>
+              <button class="btn primary" type="submit">保存</button>
+            </div>
+
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主视图：重新生成中 -->
+  <div class="backdrop" id="view-regen" style="display: none;">
+    <div class="modal" role="dialog">
+      <div class="modal-header">
+        <div>
+          <h2>设置</h2>
+          <p>从左下角设置按钮弹出，不作为独立业务路由。</p>
+        </div>
+        <button class="icon-button" aria-label="关闭">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <nav class="side-nav">
+          <button>外观与语言</button>
+          <button>本机 Agent 连接</button>
+          <button>Orchestrator</button>
+          <button>Provider 与密钥</button>
+          <button>Skill 管理</button>
+          <button class="active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            自建 Agent
+          </button>
+        </nav>
+
+        <div class="main" style="position: relative; min-height: 400px;">
+          <!-- 表单整体在背后（淡化） -->
+          <form class="edit-form" style="opacity: 0.35; pointer-events: none;">
+            <div>
+              <label class="required">System Prompt（8000 字符上限）</label>
+              <textarea>你是 React 组件专家。优先给出可直接应用的 UI 代码修改。</textarea>
+            </div>
+            <div>
+              <label>能力标签</label>
+              <div class="capability-tag-editor">
+                <span class="capability-tag">代码修改 <span class="capability-tag-remove">×</span></span>
+                <span class="capability-tag">测试补充 <span class="capability-tag-remove">×</span></span>
+                <input class="capability-tag-input" placeholder="输入新标签后回车..." />
+              </div>
+            </div>
+          </form>
+
+          <div class="regen-overlay">
+            <div class="spinner"></div>
+            <div class="msg">LLM 正在重新分析 profile…</div>
+            <div class="msg" style="font-size: 11px; color: var(--text-3);">使用当前字段 + 可选说明；完成后自动跳回编辑面板</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 删除二次确认弹窗 -->
+  <div class="confirm-backdrop" id="view-confirm" style="display: none;">
+    <div class="confirm" role="alertdialog">
+      <h4>删除自建 Agent</h4>
+      <p>你即将删除 <strong>Doc Reviewer</strong>（<code>@doc-reviewer</code>）。</p>
+      <p>该 Agent 仍出现在 1 个群聊的 roster 中：</p>
+      <ul class="roster-list">
+        <li>· 群聊 产品文案 <span class="count">(1 个成员)</span></li>
+      </ul>
+      <p>删除后，该 roster 会显示"已删除 Agent"。</p>
+      <p>该 Agent 的历史 run / 消息 / interaction 保留。</p>
+      <p class="warn">⚠️ 此操作不可恢复。</p>
+
+      <div class="confirm-actions">
+        <button class="btn ghost">取消</button>
+        <button class="btn danger">确认删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 对照说明 -->
+  <div class="compare">
+    <div class="panel">
+      <div class="panel-header">视图 1: 列表（list 状态）</div>
+      <div class="panel-body">
+        <p class="desc">显示所有自建 Agent，每行含头像 + displayName + alias + 能力 tag + 最后运行信息。空态显示引导文案。</p>
+        <ul>
+          <li>点击行 → 进入 <code>edit.preview</code> 详情视图</li>
+          <li>"最后运行" 链接到对应 conversation（V3.6 留 TODO）</li>
+          <li>无 system Agent（V3.5 决策：G6 单聊不接入；V3.6 设置页也不展示）</li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">视图 2: 详情（edit.preview）</div>
+      <div class="panel-body">
+        <p class="desc">只读详情，4 个操作：重新生成 profile / 编辑 / 删除（带 Q6 防御）/ 关闭。</p>
+        <ul>
+          <li>System Prompt 默认显示前 6 行，点 [展开] 看全部</li>
+          <li>删除按钮 <code>disabled</code> + tooltip = precheck 失败态（active runs 存在）</li>
+          <li>precheck 通过 → 点删除弹视图 5 二次确认</li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">视图 3: 编辑（edit.editing）</div>
+      <div class="panel-body">
+        <p class="desc">所有字段表单，capability tag 编辑器沿用 V3.5 <code>.capability-tag</code> 视觉。avatarKind=uploaded 真实接入走 <code>/api/agents/:id/avatar</code>。</p>
+        <ul>
+          <li>alias 改名带 ⚠️ 提示：历史 roster 行 alias 保留</li>
+          <li>重新生成 profile 不持久化 session，一次 LLM 调用回填</li>
+          <li>systemPrompt 实时字符计数</li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">视图 4: 重新生成 LLM（edit.regenerating）</div>
+      <div class="panel-body">
+        <p class="desc">表单整体淡化 + 居中 spinner，覆盖在 main 区域上。完成后自动跳回编辑面板并预填新 draft（不进 <code>regen-preview</code> 状态，省一步）。</p>
+        <ul>
+          <li>复用 V3.2 <code>buildPlannerPrompt</code> + Anthropic / OpenAI Planner</li>
+          <li>输入：当前 <code>AgentSummary</code> 字段 + 用户 instruction</li>
+          <li>输出：<code>agentDraftPartialSchema</code> 解析的 patch，<strong>不落库</strong></li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">视图 5: 删除二次确认</div>
+      <div class="panel-body">
+        <p class="desc">precheck 通过后弹出，列出该 Agent 仍在的群聊 + roster 成员数。红色"确认删除"按钮高危样式。</p>
+        <ul>
+          <li>删除后 <code>getConversationRoster</code> 序列化降级"已删除 Agent" → 🤖</li>
+          <li>agent_skills 自动级联（Drizzle cascade）</li>
+          <li>历史 <code>agent_runs / agent_interactions / messages.agent_id</code> 保留 dangle FK</li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">avatarKind=uploaded 真实接入</div>
+      <div class="panel-body">
+        <p class="desc">V3.5 留降级到 🤖，V3.6 真实接入：</p>
+        <ul>
+          <li>[更换头像] → 复用 <code>/api/attachments/select?imageOnly=true</code>（V1 已有，Windows OpenFileDialog）</li>
+          <li>选中后存绝对路径到 <code>agents.avatar_value</code>（不复制 bytes）</li>
+          <li>前端 <code>&lt;img src=/api/agents/:id/avatar&gt;</code> 流式获取</li>
+          <li>服务端校验：路径必须在 <code>process.cwd()</code> 或 <code>os.homedir()</code> 子树，文件 ≤ 1MB</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 视图切换（仅原型演示用） -->
+  <script>
+    const views = ["view-list", "view-detail", "view-edit", "view-regen", "view-confirm"];
+    function show(viewId) {
+      views.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = id === viewId ? (id === "view-confirm" ? "flex" : "flex") : "none";
+      });
+    }
+    // 用 hash 控制当前视图：#detail / #edit / #regen / #confirm
+    function syncFromHash() {
+      const map = {
+        "#list": "view-list",
+        "#detail": "view-detail",
+        "#edit": "view-edit",
+        "#regen": "view-regen",
+        "#confirm": "view-confirm"
+      };
+      const target = map[location.hash] || "view-list";
+      show(target);
+    }
+    window.addEventListener("hashchange", syncFromHash);
+    syncFromHash();
+  </script>
+
+</body>
+</html>
