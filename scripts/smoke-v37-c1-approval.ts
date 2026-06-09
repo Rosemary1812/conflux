@@ -1,20 +1,22 @@
 /**
- * V3.7 C1 smoke for self-built SDK adapter Approval bridge.
+ * V3.7 C1+C2 smoke for self-built SDK adapter interaction bridges.
  *
- * Drives createCustomAgentPermissionHandler directly with a mocked
- * AdapterRunParams so we can assert:
- *   1. requestInteraction is called with kind=approval and a payload
- *      mapped from SDK tool name / input / options.
- *   2. Approved decisions return { behavior: "allow", updatedInput, toolUseID }.
- *   3. Rejected decisions return { behavior: "deny", message, toolUseID }
- *      (not "error"), so the SDK can keep the same run alive.
+ * Drives createCustomAgentPermissionHandler and handleCustomAgentChoice
+ * directly with a mocked AdapterRunParams so we can assert:
+ *   1. Approval: requestInteraction is called with kind=approval and a
+ *      payload mapped from SDK tool name / input / options. Approved
+ *      decisions return { behavior: "allow", updatedInput, toolUseID };
+ *      rejected return { behavior: "deny", message, toolUseID }.
+ *   2. Choice: handleCustomAgentChoice normalizes option ids, falls
+ *      back to allowCustom=true, and renders the user answer as a tool
+ *      result the model can read.
  *
- * This is intentionally not a full SDK query smoke: the handler is the
- * surface that V3.7 C1 changes, and a real SDK query would also depend
- * on the configured Provider (MiniMax M3) supporting tool_use.
+ * This is intentionally not a full SDK query smoke: the handlers are
+ * the surface that V3.7 C1/C2 changes, and a real SDK query would also
+ * depend on the configured Provider (MiniMax M3) supporting tool_use.
  */
 
-import { createCustomAgentPermissionHandler } from "../lib/adapters/claude-code-sdk";
+import { createCustomAgentPermissionHandler, handleCustomAgentChoice } from "../lib/adapters/claude-code-sdk";
 import type { AdapterRunParams } from "../lib/adapters/types";
 import type { AgentSummary } from "../lib/agents/types";
 
@@ -32,11 +34,11 @@ const agent: AgentSummary = {
 
 type CapturedRequest = {
   interaction: { kind: string; messageId: string; payload: Record<string, unknown> };
-  resolve: (decision: { kind: "approval"; approved: boolean }) => void;
+  resolve: (decision: unknown) => void;
 };
 
 function buildParams(opts: {
-  approve: boolean;
+  decide: (interaction: { kind: string }) => unknown;
 }): { params: AdapterRunParams; captured: CapturedRequest[] } {
   const captured: CapturedRequest[] = [];
 
@@ -49,15 +51,12 @@ function buildParams(opts: {
     attachments: [],
     signal: new AbortController().signal,
     requestInteraction(interaction) {
-      const decision = {
-        kind: "approval" as const,
-        approved: opts.approve
-      };
+      const decision = opts.decide(interaction as { kind: string });
       captured.push({
         interaction: interaction as CapturedRequest["interaction"],
         resolve: () => decision
       });
-      return Promise.resolve(decision);
+      return Promise.resolve(decision as never);
     },
     saveExternalSessionId: () => {}
   };
@@ -65,13 +64,7 @@ function buildParams(opts: {
   return { params, captured };
 }
 
-type CanUseTool = Parameters<ReturnType<typeof createCustomAgentPermissionHandler>>[2] extends infer O
-  ? O extends { toolUseID: string }
-    ? (toolName: string, input: Record<string, unknown>, options: O) => Promise<unknown>
-    : never
-  : never;
-
-async function invoke(
+async function invokeApproval(
   params: AdapterRunParams,
   toolName: string,
   input: Record<string, unknown>,
@@ -93,9 +86,9 @@ function expect(condition: unknown, label: string) {
 async function main() {
   // Case A: Write tool, user approves
   {
-    const { params, captured } = buildParams({ approve: true });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: true }) });
     const signal = new AbortController().signal;
-    const result = (await invoke(params, "Write", { file_path: "tmp/v37-c1.txt", content: "hi" }, {
+    const result = (await invokeApproval(params, "Write", { file_path: "tmp/v37-c1.txt", content: "hi" }, {
       toolUseID: "tool-A",
       title: "Write tmp/v37-c1.txt",
       description: "Will overwrite the file if it exists.",
@@ -114,9 +107,9 @@ async function main() {
 
   // Case B: Bash tool, command extracted from input.command
   {
-    const { params, captured } = buildParams({ approve: true });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: true }) });
     const signal = new AbortController().signal;
-    const result = (await invoke(params, "Bash", { command: "npm test" }, {
+    const result = (await invokeApproval(params, "Bash", { command: "npm test" }, {
       toolUseID: "tool-B",
       title: "Run npm test",
       signal
@@ -130,33 +123,33 @@ async function main() {
 
   // Case C: Bash tool, command fallback to input.cmd
   {
-    const { params, captured } = buildParams({ approve: true });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: true }) });
     const signal = new AbortController().signal;
-    await invoke(params, "Bash", { cmd: "ls" }, { toolUseID: "tool-C", signal });
+    await invokeApproval(params, "Bash", { cmd: "ls" }, { toolUseID: "tool-C", signal });
     expect(captured[0].interaction.payload.command === "ls", "C: command fallback to input.cmd");
   }
 
   // Case D: WebFetch → action=network
   {
-    const { params, captured } = buildParams({ approve: true });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: true }) });
     const signal = new AbortController().signal;
-    await invoke(params, "WebFetch", { url: "https://example.com" }, { toolUseID: "tool-D", signal });
+    await invokeApproval(params, "WebFetch", { url: "https://example.com" }, { toolUseID: "tool-D", signal });
     expect(captured[0].interaction.payload.action === "network", "D: action=network");
   }
 
   // Case E: Unknown tool → action=tool_use
   {
-    const { params, captured } = buildParams({ approve: true });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: true }) });
     const signal = new AbortController().signal;
-    await invoke(params, "WeirdTool", { foo: "bar" }, { toolUseID: "tool-E", signal });
+    await invokeApproval(params, "WeirdTool", { foo: "bar" }, { toolUseID: "tool-E", signal });
     expect(captured[0].interaction.payload.action === "tool_use", "E: action=tool_use fallback");
   }
 
   // Case F: Rejected → deny with toolUseID, not "error"
   {
-    const { params, captured } = buildParams({ approve: false });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: false }) });
     const signal = new AbortController().signal;
-    const result = (await invoke(params, "Write", { file_path: "no.txt" }, {
+    const result = (await invokeApproval(params, "Write", { file_path: "no.txt" }, {
       toolUseID: "tool-F",
       signal
     })) as { behavior: string; message: string; toolUseID?: string };
@@ -169,9 +162,9 @@ async function main() {
 
   // Case G: blockedPath used as path fallback for Write
   {
-    const { params, captured } = buildParams({ approve: true });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: true }) });
     const signal = new AbortController().signal;
-    await invoke(params, "Write", { content: "x" }, {
+    await invokeApproval(params, "Write", { content: "x" }, {
       toolUseID: "tool-G",
       blockedPath: "outside/cwd.txt",
       signal
@@ -181,15 +174,86 @@ async function main() {
 
   // Case H: risk filled from description / decisionReason
   {
-    const { params, captured } = buildParams({ approve: true });
+    const { params, captured } = buildParams({ decide: () => ({ kind: "approval", approved: true }) });
     const signal = new AbortController().signal;
-    await invoke(params, "Bash", { command: "rm -rf /" }, {
+    await invokeApproval(params, "Bash", { command: "rm -rf /" }, {
       toolUseID: "tool-H",
       description: "Destructive filesystem operation outside the workspace.",
       signal
     });
     const risk = captured[0].interaction.payload.risk as string;
     expect(risk.includes("Destructive"), "H: risk populated from description");
+  }
+
+  // Case I: Choice — options with explicit ids preserved, allowCustom defaulted
+  {
+    const { params, captured } = buildParams({
+      decide: () => ({ kind: "choice", selectedOptionIds: ["alpha"], customText: "" })
+    });
+    const result = (await handleCustomAgentChoice(params, {
+      prompt: "Pick one",
+      options: [
+        { id: "alpha", label: "Alpha" },
+        { id: "beta", label: "Beta" }
+      ]
+    })) as { content: Array<{ type: "text"; text: string }> };
+
+    expect(captured.length === 1, "I: requestInteraction called once");
+    expect(captured[0].interaction.kind === "choice", "I: kind=choice");
+    const iPayload = captured[0].interaction.payload as Record<string, unknown>;
+    expect(iPayload.prompt === "Pick one", "I: prompt preserved");
+    const iOptions = iPayload.options as Array<{ id: string; label: string }>;
+    expect(iOptions.length === 2 && iOptions[0].id === "alpha" && iOptions[1].id === "beta", "I: explicit option ids preserved");
+    expect(iPayload.allowCustom === true, "I: allowCustom defaults to true");
+    expect(result.content[0].text === "alpha", "I: result text = selectedOptionIds joined");
+  }
+
+  // Case J: Choice — option without id gets a fallback id
+  {
+    const { params, captured } = buildParams({
+      decide: () => ({ kind: "choice", selectedOptionIds: ["option_2"], customText: "" })
+    });
+    await handleCustomAgentChoice(params, {
+      prompt: "Pick",
+      options: [
+        { label: "First" },
+        { label: "Second" }
+      ]
+    });
+    const jOptions = captured[0].interaction.payload.options as Array<{ id: string; label: string }>;
+    expect(jOptions[0].id === "option_1" && jOptions[1].id === "option_2", "J: option id fallback assigned sequentially");
+  }
+
+  // Case K: Choice — customText wins over selectedOptionIds
+  {
+    const { params, captured } = buildParams({
+      decide: () => ({ kind: "choice", selectedOptionIds: ["alpha"], customText: "user typed this" })
+    });
+    const result = (await handleCustomAgentChoice(params, {
+      prompt: "Pick",
+      options: [
+        { id: "alpha", label: "Alpha" },
+        { id: "beta", label: "Beta" }
+      ],
+      allowCustom: false
+    })) as { content: Array<{ type: "text"; text: string }> };
+    expect(captured[0].interaction.payload.allowCustom === false, "K: allowCustom=false preserved");
+    expect(result.content[0].text === "user typed this", "K: customText wins");
+  }
+
+  // Case L: Choice — non-choice decision fallback text
+  {
+    const { params } = buildParams({
+      decide: () => ({ kind: "approval", approved: true }) as never
+    });
+    const result = (await handleCustomAgentChoice(params, {
+      prompt: "Pick",
+      options: [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" }
+      ]
+    })) as { content: Array<{ type: "text"; text: string }> };
+    expect(result.content[0].text === "No choice was provided.", "L: non-choice decision yields fallback text");
   }
 
   console.log("---");

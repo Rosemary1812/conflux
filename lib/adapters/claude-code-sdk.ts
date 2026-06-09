@@ -1,4 +1,5 @@
-import { query, type CanUseTool, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, tool, type CanUseTool, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import { formatAttachmentContext, type AdapterRunParams, type AgentAdapter, type AgentEvent } from "@/lib/adapters/types";
 import { getAnthropicRuntimeProvider } from "@/lib/providers/service";
 import { getProfileMeta } from "@/lib/skills/agent-creator/profiles";
@@ -8,7 +9,7 @@ export const claudeCodeSdkAdapter: AgentAdapter = {
   platform: "claude_code",
   capabilities: {
     supportsApproval: "native",
-    supportsChoice: "none"
+    supportsChoice: "native"
   },
   async healthcheck() {
     const provider = getAnthropicRuntimeProvider();
@@ -81,6 +82,9 @@ async function* runClaudeCodeSdk(params: AdapterRunParams): AsyncIterable<AgentE
         env: buildSdkEnv(provider),
         includePartialMessages: true,
         maxTurns: 50,
+        mcpServers: {
+          agenthub_interactions: createCustomAgentChoiceServer(params)
+        },
         model: provider.defaultModel,
         permissionMode: profile.permissionMode,
         resume: params.externalSessionId,
@@ -220,7 +224,8 @@ function buildSystemPrompt(params: AdapterRunParams) {
     "",
     "You are running inside AgentHub as a user-created agent.",
     "Use the current working directory as the only project workspace unless the user explicitly provides another path.",
-    "V3.7 C1: Tool permission requests are bridged to the AgentHub inline Approval card. Choice bridging is not yet wired; keep user-facing questions concise in normal text."
+    "V3.7: Tool permission requests are bridged to the AgentHub inline Approval card.",
+    "When you need the user to choose between options, call the MCP tool `request_choice` from the `agenthub_interactions` server instead of asking in plain text."
   ].join("\n");
 }
 
@@ -253,6 +258,71 @@ export function createCustomAgentPermissionHandler(params: AdapterRunParams): Ca
       toolUseID: options.toolUseID
     };
   };
+}
+
+export function createCustomAgentChoiceServer(params: AdapterRunParams) {
+  return createSdkMcpServer({
+    name: "agenthub_interactions",
+    version: "0.1.0",
+    instructions: "Use request_choice whenever the run needs the user to choose before continuing.",
+    alwaysLoad: true,
+    tools: [
+      tool(
+        "request_choice",
+        "Ask the AgentHub user to choose one option before continuing the same run.",
+        {
+          prompt: z.string().min(1),
+          options: z
+            .array(
+              z.object({
+                id: z.string().min(1).optional(),
+                label: z.string().min(1),
+                description: z.string().optional()
+              })
+            )
+            .min(2)
+            .max(4),
+          allowCustom: z.boolean().optional()
+        },
+        async (args) => handleCustomAgentChoice(params, args),
+        { alwaysLoad: true }
+      )
+    ]
+  });
+}
+
+type CustomAgentChoiceArgs = {
+  prompt: string;
+  options: Array<{ id?: string; label: string; description?: string }>;
+  allowCustom?: boolean;
+};
+
+/** @internal Exposed for V3.7 C2 smoke only; not part of the public adapter surface. */
+export async function handleCustomAgentChoice(
+  params: AdapterRunParams,
+  args: CustomAgentChoiceArgs
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const decision = await params.requestInteraction({
+    kind: "choice",
+    messageId: "",
+    payload: {
+      prompt: args.prompt,
+      options: args.options.map((option, index) => ({
+        id: option.id ?? `option_${index + 1}`,
+        label: option.label,
+        description: option.description
+      })),
+      allowCustom: args.allowCustom ?? true
+    }
+  });
+
+  if (decision.kind !== "choice") {
+    return { content: [{ type: "text", text: "No choice was provided." }] };
+  }
+
+  const answer = decision.customText || decision.selectedOptionIds.join(", ");
+
+  return { content: [{ type: "text", text: answer || "No choice was selected." }] };
 }
 
 function sessionIdFromSdkMessage(message: SDKMessage) {

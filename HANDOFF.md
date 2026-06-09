@@ -5,7 +5,7 @@
 - 路径：`D:\coding\agent\AgentHub`
 - 当前分支：`main`
 - 当前阶段：V3 自建 Agent、Skill 与基础收口
-- 当前 phase：**V3.7 SDK Approval / Choice 桥接 C0 已起草，等待进入实现**
+- 当前 phase：**V3.7 SDK Approval / Choice 桥接 C1 + C2 已实现并提交**
 - 最新提交：`bbcaa28 docs(workflow): move memos and add demo assets`
 - 当前工作区：仅 `docs/design/specs/v3-phase-3.7.md` 未提交
 
@@ -43,6 +43,10 @@
   - `bbcaa28` 将 `docs/memo/*` 迁到 `docs/design/memo/*`，并新增演示图片资源。
 - V3.7 C0 设计稿已新增：
   - `docs/design/specs/v3-phase-3.7.md`
+- V3.7 C1 + C2 已实现并提交：
+  - `5b4b906` C1：自建 SDK adapter Approval 桥接（`canUseTool` → approval）
+  - `7f50202` C1 smoke：21 个 approval case 全过；TOFIX 记录 `npm run build` Windows 沙箱 EPERM
+  - `<pending>` C2：自建 SDK adapter Choice 桥接（MCP `agenthub_interactions` + `request_choice`）
 
 ## V3.7 已确认结论
 
@@ -70,45 +74,46 @@
 
 ## 未完成
 
-- V3.7 C0 设计稿尚未提交。
-- V3.7 C1+ 实现尚未开始。
-- V3.7 完成后再更新 `roadmap.md` / 本 handoff。
+- V3.7 C3 群聊 / Orchestrator 回归尚未做：新建群聊 @ 自建 Agent，验证 task 进入 `awaiting_interaction` → 回应后回到 `running` → 最终 `done/error`；并验证 Planner 不再因 `supportsApproval=none` 拒绝分配写文件任务。
+- V3.7 C4 文档与验收收口：`roadmap.md` V3 状态更新 + 如发现真实 SDK 行为问题写到 `TOFIX.md`。
 - `git push` 未执行；仓库仍有本地提交未推远端。
+- 工作区残留与 V3.7 无关的改动（`prototypes/v1` 迁移到 `docs/design/prototypes/v1/` 的 delete + `REVIEW_CHECKLIST.md` 路径修正 + 仓库根多出来的 `README.md`），未提交。
 
 ## 本轮修改文件
 
 - `docs/design/specs/v3-phase-3.7.md`：新增 V3.7 C0 设计稿，覆盖 SDK `canUseTool`、MCP `request_choice`、run-bridge 挂起/唤醒、群聊 task 状态传播、验收标准和实现拆分。
-- `HANDOFF.md`：更新为当前 V3.7 handoff，并写入用户已认可的 4 个设计结论。
+- `HANDOFF.md`：更新为当前 V3.7 handoff，并写入用户已认可的 4 个设计结论；C1+C2 完成后再次刷新。
+- `lib/adapters/claude-code-sdk.ts`：
+  - C1：capabilities `supportsApproval: "native"`；`query()` options 注入 `canUseTool: createCustomAgentPermissionHandler(params)`；新增 handler + payload helpers（`actionForTool` / `commandFromInput` / `pathFromInput`，文件内复制以避免影响内置 `@claude-code`）；system prompt 改 V3.7 C1 提示。
+  - C2：capabilities `supportsChoice: "native"`；`query()` options 加 `mcpServers: { agenthub_interactions: createCustomAgentChoiceServer(params) }`；新增 `createCustomAgentChoiceServer` + `handleCustomAgentChoice`；system prompt 改 V3.7 提示用 `request_choice` MCP tool。
+- `scripts/smoke-v37-c1-approval.ts`：覆盖 C1（21 case：action 映射 / command&path fallback / allow vs deny 返回 / toolUseID 双向 round-trip）+ C2（10 case：option id fallback / allowCustom 默认 true / customText 优先 / 非 choice decision fallback）；31/31 OK。
+- `docs/state/TOFIX.md`：记录 `npm run build` Windows 沙箱 `EPERM scandir 'C:\Users\wsmdm\Application Data'`（symlink → Roaming AppData，ACL 拒访）P2 环境问题，与 V3.7 代码无关。
 
 ## 验证结果
 
-- `git diff --check`：通过（新增 V3.7 C0 后检查通过）
-- 未运行 `npm run typecheck` / `npm run build`：当前只新增文档，没有代码变更
+- `git diff --check`：通过
+- `npm run typecheck`：通过
+- `npx next dev` 编译 23603 modules：通过
+- `npm run build`：失败，原因是 TOFIX 已记的 Windows 沙箱环境问题，与 V3.7 代码无关
+- `npx tsx scripts/smoke-v37-c1-approval.ts`：31/31 OK（C1 21 + C2 10）
 
 ## 风险与阻塞
 
-- V3.7 需要真实 SDK 行为验证。不要只用 mock 证明通过。
+- V3.7 C1/C2 smoke 是 handler 级别（mock `params.requestInteraction`），不是端到端真 SDK query。`@anthropic-ai/claude-agent-sdk` 通过 minimax M3 跑通 Claude Code 工具调用 + tool_use 触发 canUseTool 的可行性需在 C3 群聊回归中验证；如果 M3 不支持 tool_use，需要切回真 Anthropic Provider。
 - `lib/adapters/claude-code.ts` 已有可工作的 Approval/Choice 路径，不要为了抽象复用而改动它。
 - `executor` profile 不弹 Approval 是产品语义选择；如果后续要收紧，应该改 profile 策略，而不是在 V3.7 实现里偷偷改变运行语义。
 - 当前 `git status` 可能仍提示无法访问 `C:\Users\wsmdm/.config/git/ignore`，这是环境权限 warning，不代表仓库有变更。
 
 ## 下一个 Agent 应继续做什么
 
-先提交 V3.7 C0 文档与 handoff 更新：
+进入 **V3.7 C3 群聊 / Orchestrator 回归**：
 
-```text
-docs(plan): V3.7 SDK interaction bridge draft
-```
+- 用群聊会话 @ 自建 code-author Agent，触发 Approval / Choice。
+- 验证 `agent_interactions.conversation_agent_id` / `orchestrator_task_id` 正确落库；右栏 task 状态显示"等待交互"；回应后恢复运行并最终 `done/error`。
+- 验证 Orchestrator Planner 不再因为 `supportsApproval=none` 拒绝分配写文件任务。
+- 注意端到端测试需要 minimax M3 跑通 SDK tool_use；如不支持，需切真 Anthropic Provider 或 fallback 到 C1/C2 handler smoke 作为最终验证。
 
-然后进入 V3.7 C1，只做 **自建 SDK adapter 的 Approval 桥接**：
-
-- 在 `lib/adapters/claude-code-sdk.ts` 增加 `canUseTool`。
-- 把 SDK tool permission 请求映射到 V1.5 `approval` interaction。
-- 用户批准后返回 `{ behavior: "allow", updatedInput: input, toolUseID }`。
-- 用户拒绝后返回 `{ behavior: "deny", message, toolUseID }`。
-- C1 阶段先不要接 Choice，`supportsChoice` 可暂时保持 `none`。
-
-C1 验证通过后再做 C2 Choice MCP `request_choice`。
+C3 验证通过后再做 C4：`roadmap.md` V3 状态更新 + 真实 SDK 行为问题写入 `TOFIX.md`（如发现）。
 
 ## 禁止事项
 
@@ -119,6 +124,7 @@ C1 验证通过后再做 C2 Choice MCP `request_choice`。
 - 不要让 V3.7 顺手改 Provider、Agent 设置页、Orchestrator Planner prompt 或 V3.6 UI。
 - 不要把 `executor` profile 改成运行时弹 Approval，除非用户重新拍板。
 - 不要 `git push`，除非用户明确要求。
+- 不要把工作区残留的 `prototypes/v1` 迁移 delete / `REVIEW_CHECKLIST.md` 路径修正 / 仓库根 `README.md` 与 V3.7 一起提交；它们是别的流程。
 
 ## 可直接复制给下一个 Agent 的 Prompt
 
