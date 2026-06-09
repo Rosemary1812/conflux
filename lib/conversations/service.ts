@@ -223,6 +223,103 @@ export function updateSelfBuiltAgent(id: string, patch: SelfBuiltAgentUpdate): A
   return getSelfBuiltAgentById(id);
 }
 
+export type ConversationUsageEntry = {
+  conversationId: string;
+  title: string;
+  joinedAt: number;
+  alias: string;
+};
+
+export type AgentDeletePrecheck = {
+  canDelete: boolean;
+  activeRunCount: number;
+  conversationCount: number;
+  activeRuns: Array<{ runId: string; conversationId: string; status: string; createdAt: number }>;
+  conversationUsage: ConversationUsageEntry[];
+};
+
+type AgentRunStatus = "pending" | "running" | "done" | "error" | "cancelled" | "awaiting_interaction";
+const ACTIVE_RUN_STATUSES: AgentRunStatus[] = ["pending", "running", "awaiting_interaction"];
+
+export function precheckDeleteSelfBuiltAgent(id: string): AgentDeletePrecheck {
+  const agent = getDb().select().from(agents).where(eq(agents.id, id)).get();
+  if (!agent) {
+    throw new SelfBuiltAgentError("Agent 不存在", 404);
+  }
+  if (agent.isSystem) {
+    throw new SelfBuiltAgentError("内置 Agent 不可删除", 403);
+  }
+
+  const activeRuns = getDb()
+    .select({
+      runId: agentRuns.id,
+      conversationId: agentRuns.conversationId,
+      status: agentRuns.status,
+      createdAt: agentRuns.createdAt
+    })
+    .from(agentRuns)
+    .where(
+      and(eq(agentRuns.agentId, id), inArray(agentRuns.status, ACTIVE_RUN_STATUSES))
+    )
+    .all();
+
+  const conversationUsage: ConversationUsageEntry[] = getDb()
+    .select({
+      conversationId: conversationAgents.conversationId,
+      title: conversations.title,
+      joinedAt: conversationAgents.joinedAt,
+      alias: conversationAgents.alias
+    })
+    .from(conversationAgents)
+    .innerJoin(conversations, eq(conversations.id, conversationAgents.conversationId))
+    .where(eq(conversationAgents.agentId, id))
+    .orderBy(asc(conversationAgents.joinedAt))
+    .all()
+    .map((row) => ({
+      conversationId: row.conversationId,
+      title: row.title,
+      joinedAt: row.joinedAt ?? 0,
+      alias: row.alias
+    }));
+
+  return {
+    canDelete: activeRuns.length === 0,
+    activeRunCount: activeRuns.length,
+    conversationCount: conversationUsage.length,
+    activeRuns,
+    conversationUsage
+  };
+}
+
+export type AgentDeleteResponse = {
+  ok: true;
+  agentId: string;
+  cascadedRoster: number;
+  cancelledRuns: number;
+};
+
+export function deleteSelfBuiltAgent(id: string): AgentDeleteResponse {
+  const agent = getDb().select().from(agents).where(eq(agents.id, id)).get();
+  if (!agent) {
+    throw new SelfBuiltAgentError("Agent 不存在", 404);
+  }
+  if (agent.isSystem) {
+    throw new SelfBuiltAgentError("内置 Agent 不可删除", 403);
+  }
+
+  const precheck = precheckDeleteSelfBuiltAgent(id);
+  if (!precheck.canDelete) {
+    throw new SelfBuiltAgentError(
+      `还有 ${precheck.activeRunCount} 个未完成 run，请先取消或等待`,
+      409
+    );
+  }
+
+  getDb().delete(agents).where(eq(agents.id, id)).run();
+
+  return { ok: true, agentId: id, cascadedRoster: 0, cancelledRuns: 0 };
+}
+
 export function createConversation(input: CreateConversationInput = {}) {
   const mode = input.mode ?? "single";
   const now = Date.now();
@@ -1114,11 +1211,26 @@ export function getConversationRoster(conversationId: string) {
       capabilities: agents.capabilities
     })
     .from(conversationAgents)
-    .innerJoin(agents, eq(conversationAgents.agentId, agents.id))
+    .leftJoin(agents, eq(conversationAgents.agentId, agents.id))
     .where(eq(conversationAgents.conversationId, conversationId))
     .orderBy(conversationAgents.joinedAt)
     .all()
     .map((row, _index, rows) => {
+      // V3.6：dangle 引用（agent 已被删除）降级为"已删除 Agent"占位
+      if (!row.slug) {
+        return {
+          id: row.id,
+          alias: row.alias,
+          displayName: "已删除 Agent",
+          status: row.status as "active" | "idle" | "running" | "unavailable",
+          slug: row.alias,
+          isSystem: false,
+          avatarKind: "system" as const,
+          avatarValue: "__deleted__",
+          capabilities: null
+        };
+      }
+
       const currentDisplayName = row.displayName ?? row.name ?? row.alias;
       const sameSlugRows = rows.filter((candidate) => candidate.slug === row.slug);
       const displayNameSet = new Set(

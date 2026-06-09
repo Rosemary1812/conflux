@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { agentUpdateSchema } from "@/lib/agents/edit-schema";
-import { getSelfBuiltAgentById, updateSelfBuiltAgent } from "@/lib/conversations/service";
-import { SelfBuiltAgentError } from "@/lib/conversations/service";
+import {
+  deleteSelfBuiltAgent,
+  getSelfBuiltAgentById,
+  SelfBuiltAgentError,
+  updateSelfBuiltAgent
+} from "@/lib/conversations/service";
 
 export const runtime = "nodejs";
 
@@ -56,3 +60,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     );
   }
 }
+
+export async function DELETE(_request: NextRequest, context: RouteContext) {
+  try {
+    const { id } = await context.params;
+    const result = deleteSelfBuiltAgent(id);
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof SelfBuiltAgentError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "删除 Agent 失败" },
+      { status: 500 }
+    );
+  }
+}
+

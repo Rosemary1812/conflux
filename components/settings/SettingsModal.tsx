@@ -16,10 +16,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { AgentFormDraft, AgentFormErrors } from "@/components/settings/custom-agents/AgentEditPanel";
+import { AgentDeleteConfirm } from "@/components/settings/custom-agents/AgentDeleteConfirm";
 import { AgentDetailPanel } from "@/components/settings/custom-agents/AgentDetailPanel";
 import { AgentEditPanel } from "@/components/settings/custom-agents/AgentEditPanel";
 import { AgentListPanel } from "@/components/settings/custom-agents/AgentListPanel";
 import type { AgentAvatarKind, AgentSummary, SelfBuiltAgentListItem } from "@/lib/agents/types";
+import type { AgentDeletePrecheck } from "@/lib/conversations/service";
 
 type SettingsModalProps = {
   onClose: () => void;
@@ -547,7 +549,7 @@ function SkillsPanel() {
 
 type CustomAgentMode =
   | { kind: "list" }
-  | { kind: "detail"; agentId: string }
+  | { kind: "detail"; agentId: string; precheck: AgentDeletePrecheck | null }
   | { kind: "edit"; agentId: string };
 
 function emptyDraft(): AgentFormDraft {
@@ -589,6 +591,10 @@ function CustomAgentsPanel() {
   const [fieldErrors, setFieldErrors] = useState<AgentFormErrors>({});
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    precheck: AgentDeletePrecheck;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadList = useCallback(async () => {
     setIsLoading(true);
@@ -617,6 +623,7 @@ function CustomAgentsPanel() {
   async function openDetail(agentId: string) {
     setStatus("");
     setError(null);
+    setDeleteConfirm(null);
     try {
       const response = await fetch(`/api/agents/${agentId}`);
       const payload = (await response.json()) as { agent?: AgentSummary; error?: string };
@@ -625,9 +632,27 @@ function CustomAgentsPanel() {
         return;
       }
       setCurrentAgent(payload.agent);
-      setMode({ kind: "detail", agentId });
+      setMode({ kind: "detail", agentId, precheck: null });
+      void loadPrecheck(agentId);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "加载 Agent 详情失败。");
+    }
+  }
+
+  async function loadPrecheck(agentId: string) {
+    try {
+      const response = await fetch(`/api/agents/${agentId}/precheck-delete`);
+      const payload = (await response.json()) as { precheck?: AgentDeletePrecheck; error?: string };
+      if (!response.ok || !payload.precheck) {
+        return;
+      }
+      setMode((current) =>
+        current.kind === "detail" && current.agentId === agentId
+          ? { ...current, precheck: payload.precheck ?? null }
+          : current
+      );
+    } catch {
+      // 预检失败不阻塞 UI（删除按钮仍可点，DELETE 阶段会再校一次）
     }
   }
 
@@ -666,7 +691,7 @@ function CustomAgentsPanel() {
     setDraft(agentToDraft(currentAgent));
     setFieldErrors({});
     setStatus("");
-    setMode({ kind: "detail", agentId: currentAgent.id });
+    setMode({ kind: "detail", agentId: currentAgent.id, precheck: null });
   }
 
   async function saveEdit() {
@@ -715,7 +740,8 @@ function CustomAgentsPanel() {
       }
       setCurrentAgent(payload.agent);
       setStatus("已保存。");
-      setMode({ kind: "detail", agentId: payload.agent.id });
+      setMode({ kind: "detail", agentId: payload.agent.id, precheck: null });
+      void loadPrecheck(payload.agent.id);
       await loadList();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "保存失败。");
@@ -729,26 +755,54 @@ function CustomAgentsPanel() {
     setStatus("重新生成 profile（V3.6 C4 实现）");
   }
 
-  async function deleteAgent() {
+  async function startDelete() {
     if (!currentAgent) return;
-    const ok = window.confirm(`确认删除自建 Agent "${currentAgent.name}"？此操作不可恢复。`);
-    if (!ok) return;
+    setStatus("");
+    try {
+      const response = await fetch(`/api/agents/${currentAgent.id}/precheck-delete`);
+      const payload = (await response.json()) as { precheck?: AgentDeletePrecheck; error?: string };
+      if (!response.ok || !payload.precheck) {
+        setStatus(payload.error ?? "删除预检失败。");
+        return;
+      }
+      if (!payload.precheck.canDelete) {
+        setStatus(`还有 ${payload.precheck.activeRunCount} 个未完成 run，请先取消或等待。`);
+        return;
+      }
+      setDeleteConfirm({ precheck: payload.precheck });
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "删除预检失败。");
+    }
+  }
+
+  async function confirmDelete() {
+    if (!currentAgent || !deleteConfirm) return;
+    setIsDeleting(true);
     setStatus("删除中...");
     try {
       const response = await fetch(`/api/agents/${currentAgent.id}`, { method: "DELETE" });
       const payload = (await response.json().catch(() => ({}))) as { error?: string };
       if (!response.ok) {
         setStatus(payload.error ?? "删除失败。");
+        setIsDeleting(false);
         return;
       }
       setCurrentAgent(null);
       setDraft(emptyDraft());
+      setDeleteConfirm(null);
       setStatus("已删除。");
       setMode({ kind: "list" });
       await loadList();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "删除失败。");
+    } finally {
+      setIsDeleting(false);
     }
+  }
+
+  function cancelDelete() {
+    if (isDeleting) return;
+    setDeleteConfirm(null);
   }
 
   return (
@@ -773,14 +827,15 @@ function CustomAgentsPanel() {
       {mode.kind === "detail" && currentAgent ? (
         <AgentDetailPanel
           data={currentAgent}
-          precheck={null}
+          precheck={mode.precheck}
           onBack={() => {
             setCurrentAgent(null);
+            setDeleteConfirm(null);
             setStatus("");
             setMode({ kind: "list" });
           }}
           onDelete={() => {
-            void deleteAgent();
+            void startDelete();
           }}
           onEdit={openEdit}
           onRegenerate={() => {
@@ -807,6 +862,18 @@ function CustomAgentsPanel() {
       ) : null}
 
       {status ? <p className="desc tight" style={{ marginTop: 8 }}>{status}</p> : null}
+
+      {deleteConfirm && currentAgent ? (
+        <AgentDeleteConfirm
+          data={currentAgent}
+          precheck={deleteConfirm.precheck}
+          isDeleting={isDeleting}
+          onCancel={cancelDelete}
+          onConfirm={() => {
+            void confirmDelete();
+          }}
+        />
+      ) : null}
     </section>
   );
 }
