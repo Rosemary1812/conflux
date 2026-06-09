@@ -14,7 +14,12 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { AgentFormDraft, AgentFormErrors } from "@/components/settings/custom-agents/AgentEditPanel";
+import { AgentDetailPanel } from "@/components/settings/custom-agents/AgentDetailPanel";
+import { AgentEditPanel } from "@/components/settings/custom-agents/AgentEditPanel";
+import { AgentListPanel } from "@/components/settings/custom-agents/AgentListPanel";
+import type { AgentAvatarKind, AgentSummary, SelfBuiltAgentListItem } from "@/lib/agents/types";
 
 type SettingsModalProps = {
   onClose: () => void;
@@ -540,25 +545,290 @@ function SkillsPanel() {
   );
 }
 
+type CustomAgentMode =
+  | { kind: "list" }
+  | { kind: "detail"; agentId: string }
+  | { kind: "edit"; agentId: string };
+
+function emptyDraft(): AgentFormDraft {
+  return {
+    name: "",
+    alias: "",
+    description: "",
+    systemPrompt: "",
+    permissionMode: "readonly",
+    toolProfile: "readonly",
+    capabilities: [],
+    avatarKind: "emoji",
+    avatarValue: "🤖"
+  };
+}
+
+function agentToDraft(agent: AgentSummary): AgentFormDraft {
+  const avatarKind: AgentAvatarKind = agent.avatarKind ?? "system";
+  return {
+    name: agent.name,
+    alias: agent.slug,
+    description: agent.description,
+    systemPrompt: agent.systemPrompt,
+    permissionMode: agent.permissionMode,
+    toolProfile: agent.toolProfile ?? "readonly",
+    capabilities: agent.capabilities ?? [],
+    avatarKind: avatarKind === "uploaded" ? "uploaded" : "emoji",
+    avatarValue: avatarKind === "uploaded" ? (agent.avatarValue ?? "") : agent.avatarValue || "🤖"
+  };
+}
+
 function CustomAgentsPanel() {
+  const [mode, setMode] = useState<CustomAgentMode>({ kind: "list" });
+  const [agents, setAgents] = useState<SelfBuiltAgentListItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentAgent, setCurrentAgent] = useState<AgentSummary | null>(null);
+  const [draft, setDraft] = useState<AgentFormDraft>(emptyDraft());
+  const [fieldErrors, setFieldErrors] = useState<AgentFormErrors>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const loadList = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/agents/self-built");
+      const payload = (await response.json()) as { agents?: SelfBuiltAgentListItem[]; error?: string };
+      if (!response.ok) {
+        setError(payload.error ?? "加载 Agent 列表失败。");
+        setAgents([]);
+        return;
+      }
+      setAgents(payload.agents ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载 Agent 列表失败。");
+      setAgents([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadList();
+  }, [loadList]);
+
+  async function openDetail(agentId: string) {
+    setStatus("");
+    setError(null);
+    try {
+      const response = await fetch(`/api/agents/${agentId}`);
+      const payload = (await response.json()) as { agent?: AgentSummary; error?: string };
+      if (!response.ok || !payload.agent) {
+        setStatus(payload.error ?? "加载 Agent 详情失败。");
+        return;
+      }
+      setCurrentAgent(payload.agent);
+      setMode({ kind: "detail", agentId });
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "加载 Agent 详情失败。");
+    }
+  }
+
+  async function openEditFromList(agentId: string) {
+    setStatus("");
+    setError(null);
+    try {
+      const response = await fetch(`/api/agents/${agentId}`);
+      const payload = (await response.json()) as { agent?: AgentSummary; error?: string };
+      if (!response.ok || !payload.agent) {
+        setStatus(payload.error ?? "加载 Agent 失败。");
+        return;
+      }
+      setCurrentAgent(payload.agent);
+      setDraft(agentToDraft(payload.agent));
+      setFieldErrors({});
+      setMode({ kind: "edit", agentId: payload.agent.id });
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "加载 Agent 失败。");
+    }
+  }
+
+  function openEdit() {
+    if (!currentAgent) return;
+    setDraft(agentToDraft(currentAgent));
+    setFieldErrors({});
+    setStatus("");
+    setMode({ kind: "edit", agentId: currentAgent.id });
+  }
+
+  function cancelEdit() {
+    if (!currentAgent) {
+      setMode({ kind: "list" });
+      return;
+    }
+    setDraft(agentToDraft(currentAgent));
+    setFieldErrors({});
+    setStatus("");
+    setMode({ kind: "detail", agentId: currentAgent.id });
+  }
+
+  async function saveEdit() {
+    if (!currentAgent) return;
+    setIsSaving(true);
+    setFieldErrors({});
+    setStatus("保存中...");
+    const errors = validateDraft(draft);
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setStatus("");
+      setIsSaving(false);
+      return;
+    }
+    const patch: Record<string, unknown> = {};
+    if (draft.name !== currentAgent.name) patch.name = draft.name;
+    if (draft.alias !== currentAgent.slug) patch.alias = draft.alias;
+    if (draft.description !== currentAgent.description) patch.description = draft.description;
+    if (draft.systemPrompt !== currentAgent.systemPrompt) patch.systemPrompt = draft.systemPrompt;
+    if (draft.permissionMode !== currentAgent.permissionMode) patch.permissionMode = draft.permissionMode;
+    if (draft.toolProfile !== (currentAgent.toolProfile ?? "readonly")) patch.toolProfile = draft.toolProfile;
+    if (!sameCapabilities(draft.capabilities, currentAgent.capabilities ?? [])) {
+      patch.capabilities = draft.capabilities;
+    }
+    if (draft.avatarKind !== currentAgent.avatarKind || draft.avatarValue !== currentAgent.avatarValue) {
+      patch.avatarKind = draft.avatarKind;
+      patch.avatarValue = draft.avatarValue;
+    }
+    if (Object.keys(patch).length === 0) {
+      setStatus("没有需要保存的修改。");
+      setIsSaving(false);
+      cancelEdit();
+      return;
+    }
+    try {
+      const response = await fetch(`/api/agents/${currentAgent.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      const payload = (await response.json()) as { agent?: AgentSummary; error?: string };
+      if (!response.ok || !payload.agent) {
+        setStatus(payload.error ?? "保存失败。");
+        setIsSaving(false);
+        return;
+      }
+      setCurrentAgent(payload.agent);
+      setStatus("已保存。");
+      setMode({ kind: "detail", agentId: payload.agent.id });
+      await loadList();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "保存失败。");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function regenerate() {
+    if (!currentAgent) return;
+    setStatus("重新生成 profile（V3.6 C4 实现）");
+  }
+
+  async function deleteAgent() {
+    if (!currentAgent) return;
+    const ok = window.confirm(`确认删除自建 Agent "${currentAgent.name}"？此操作不可恢复。`);
+    if (!ok) return;
+    setStatus("删除中...");
+    try {
+      const response = await fetch(`/api/agents/${currentAgent.id}`, { method: "DELETE" });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setStatus(payload.error ?? "删除失败。");
+        return;
+      }
+      setCurrentAgent(null);
+      setDraft(emptyDraft());
+      setStatus("已删除。");
+      setMode({ kind: "list" });
+      await loadList();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "删除失败。");
+    }
+  }
+
   return (
     <section>
       <h3>自建 Agent</h3>
-      <p className="desc">V1 不执行自建 Agent，只保留未来配置形态。</p>
-      <div className="agent-card-mini">
-        <span className="avatar">RA</span>
-        <div>
-          <strong>React 助手</strong>
-          <p>Default Provider · UI 优化 / React 改造</p>
-        </div>
-      </div>
-      <div className="settings-card form-stack">
-        <label>名称<input defaultValue="React 助手" /></label>
-        <label>Provider<select><option>Default Provider</option></select></label>
-        <label>System Prompt<textarea defaultValue="你是 React 组件专家。优先给出可直接应用的 UI 代码修改。" /></label>
-      </div>
+      <p className="desc">查看、编辑、删除通过 /agent-creator 创建的自建 Agent。</p>
+
+      {mode.kind === "list" ? (
+        <AgentListPanel
+          agents={agents}
+          error={error}
+          isLoading={isLoading}
+          onEdit={(agentId) => {
+            void openEditFromList(agentId);
+          }}
+          onSelect={(agentId) => {
+            void openDetail(agentId);
+          }}
+        />
+      ) : null}
+
+      {mode.kind === "detail" && currentAgent ? (
+        <AgentDetailPanel
+          data={currentAgent}
+          precheck={null}
+          onBack={() => {
+            setCurrentAgent(null);
+            setStatus("");
+            setMode({ kind: "list" });
+          }}
+          onDelete={() => {
+            void deleteAgent();
+          }}
+          onEdit={openEdit}
+          onRegenerate={() => {
+            void regenerate();
+          }}
+        />
+      ) : null}
+
+      {mode.kind === "edit" && currentAgent ? (
+        <AgentEditPanel
+          data={currentAgent}
+          draft={draft}
+          fieldErrors={fieldErrors}
+          isSaving={isSaving}
+          onCancel={cancelEdit}
+          onChange={(patch) => setDraft((value) => ({ ...value, ...patch }))}
+          onRegenerate={() => {
+            void regenerate();
+          }}
+          onSave={() => {
+            void saveEdit();
+          }}
+        />
+      ) : null}
+
+      {status ? <p className="desc tight" style={{ marginTop: 8 }}>{status}</p> : null}
     </section>
   );
+}
+
+function validateDraft(draft: AgentFormDraft): AgentFormErrors {
+  const errors: AgentFormErrors = {};
+  if (!draft.name.trim()) errors.name = "名称不能为空。";
+  if (draft.name.length > 48) errors.name = "名称不能超过 48 字符。";
+  if (!/^[a-z][a-z0-9-]*$/.test(draft.alias) || draft.alias.length < 2 || draft.alias.length > 32) {
+    errors.alias = "alias 只能包含小写字母、数字与短横线，且以字母开头（2-32 字符）。";
+  }
+  if (!draft.description.trim()) errors.description = "描述不能为空。";
+  if (draft.description.length > 240) errors.description = "描述不能超过 240 字符。";
+  if (!draft.systemPrompt.trim()) errors.systemPrompt = "System Prompt 不能为空。";
+  if (draft.systemPrompt.length > 8000) errors.systemPrompt = "System Prompt 不能超过 8000 字符。";
+  return errors;
+}
+
+function sameCapabilities(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((tag) => set.has(tag));
 }
 
 function RuntimeLine({

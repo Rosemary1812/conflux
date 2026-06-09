@@ -133,6 +133,96 @@ export function listSelfBuiltAgents(): SelfBuiltAgentListItem[] {
   });
 }
 
+export class SelfBuiltAgentError extends Error {
+  constructor(
+    message: string,
+    public status: number
+  ) {
+    super(message);
+  }
+}
+
+export function getSelfBuiltAgentById(id: string): AgentSummary {
+  const row = getDb()
+    .select()
+    .from(agents)
+    .where(eq(agents.id, id))
+    .get();
+
+  if (!row) {
+    throw new SelfBuiltAgentError("Agent 不存在", 404);
+  }
+  if (row.isSystem) {
+    throw new SelfBuiltAgentError("内置 Agent 不可编辑", 403);
+  }
+  return toAgentSummary(row);
+}
+
+type SelfBuiltAgentUpdate = {
+  name?: string;
+  alias?: string;
+  description?: string;
+  systemPrompt?: string;
+  permissionMode?: AgentSummary["permissionMode"];
+  toolProfile?: AgentSummary["toolProfile"];
+  capabilities?: string[] | null;
+  avatarKind?: AgentAvatarKind;
+  avatarValue?: string;
+};
+
+export function updateSelfBuiltAgent(id: string, patch: SelfBuiltAgentUpdate): AgentSummary {
+  const existing = getDb()
+    .select()
+    .from(agents)
+    .where(eq(agents.id, id))
+    .get();
+
+  if (!existing) {
+    throw new SelfBuiltAgentError("Agent 不存在", 404);
+  }
+  if (existing.isSystem) {
+    throw new SelfBuiltAgentError("内置 Agent 不可编辑", 403);
+  }
+
+  if (patch.alias && patch.alias !== existing.slug) {
+    const collision = getDb()
+      .select({ id: agents.id })
+      .from(agents)
+      .where(eq(agents.slug, patch.alias))
+      .get();
+    if (collision && collision.id !== id) {
+      throw new SelfBuiltAgentError(`alias "${patch.alias}" 已被占用`, 409);
+    }
+  }
+
+  if (patch.avatarKind === "uploaded" && patch.avatarValue) {
+    if (!fs.existsSync(patch.avatarValue)) {
+      throw new SelfBuiltAgentError("avatar 路径不可读", 400);
+    }
+  }
+
+  const update: Partial<typeof agents.$inferInsert> = { updatedAt: Date.now() };
+  if (patch.name !== undefined) update.name = patch.name;
+  if (patch.alias !== undefined) update.slug = patch.alias;
+  if (patch.description !== undefined) update.description = patch.description;
+  if (patch.systemPrompt !== undefined) update.systemPrompt = patch.systemPrompt;
+  if (patch.permissionMode !== undefined) update.permissionMode = patch.permissionMode;
+  if (patch.toolProfile !== undefined) update.toolProfile = patch.toolProfile;
+  if (patch.capabilities !== undefined) {
+    update.capabilities = patch.capabilities === null ? null : JSON.stringify(patch.capabilities);
+  }
+  if (patch.avatarKind !== undefined) update.avatarKind = patch.avatarKind;
+  if (patch.avatarValue !== undefined) update.avatarValue = patch.avatarValue;
+
+  getDb()
+    .update(agents)
+    .set(update)
+    .where(eq(agents.id, id))
+    .run();
+
+  return getSelfBuiltAgentById(id);
+}
+
 export function createConversation(input: CreateConversationInput = {}) {
   const mode = input.mode ?? "single";
   const now = Date.now();
@@ -1080,6 +1170,10 @@ function getMessageArtifacts(messageId: string) {
 }
 
 function toAgentSummary(agent: AgentRow): AgentSummary {
+  const rawKind = agent.avatarKind;
+  const avatarKind: AgentAvatarKind =
+    rawKind === "emoji" || rawKind === "uploaded" ? rawKind : "system";
+  const avatarValue = avatarKind === "system" ? agent.slug : agent.avatarValue ?? "";
   return {
     id: agent.id,
     slug: agent.slug,
@@ -1089,7 +1183,10 @@ function toAgentSummary(agent: AgentRow): AgentSummary {
     isSystem: agent.isSystem,
     systemPrompt: agent.systemPrompt,
     permissionMode: agent.permissionMode as AgentSummary["permissionMode"],
-    toolProfile: agent.toolProfile as AgentSummary["toolProfile"]
+    toolProfile: agent.toolProfile as AgentSummary["toolProfile"],
+    avatarKind,
+    avatarValue,
+    capabilities: agent.isSystem ? null : parseCapabilitiesJson(agent.capabilities, `agent:${agent.id}`)
   };
 }
 

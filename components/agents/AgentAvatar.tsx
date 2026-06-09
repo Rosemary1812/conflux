@@ -7,20 +7,23 @@ type AgentAvatarProps = {
   value: string;
   slug?: string;
   size?: number;
+  /** V3.6：当 kind='uploaded' 时，传入 agent id 以走 /api/agents/:id/avatar 真实预览流 */
+  agentId?: string;
 };
 
-export function AgentAvatar({ kind, value, slug, size = 24 }: AgentAvatarProps) {
+export function AgentAvatar({ kind, value, slug, size = 24, agentId }: AgentAvatarProps) {
   if (kind === "system") {
     return <AgentIcon agent={slug ?? value} size={size} />;
   }
 
   if (kind === "uploaded") {
+    const src = agentId ? `/api/agents/${agentId}/avatar` : `/api/attachments/${value}/preview`;
     return (
       <img
         alt=""
         className="agent-avatar-image"
         height={size}
-        src={`/api/attachments/${value}/preview`}
+        src={src}
         width={size}
         onError={(event) => {
           (event.currentTarget as HTMLImageElement).style.display = "none";
