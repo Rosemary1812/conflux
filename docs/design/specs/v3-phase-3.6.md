@@ -1,6 +1,6 @@
 # V3.6 自定义 Agent 设置页 C0 设计稿
 
-> 范围：本设计稿覆盖 `SettingsModal` → "自建 Agent" Tab 从静态占位做实：列表 / 编辑 / 删除 / 重新生成 profile / 重命名 alias，并接上 V3.5 留降级到 🤖 的 `avatarKind=uploaded` 真实预览。  
+> 范围：本设计稿覆盖 `SettingsModal` → "自建 Agent" Tab 从静态占位做实：列表 / 编辑 / 删除 / 重新生成 profile / 重命名 alias，并接上 V3.5 留降级到 🤖 的 `avatarKind=uploaded` 真实预览。
 > 明确不覆盖：V3.7（SDK Approval/Choice 桥接）、V3.4（profile 抽取的 prompt 流程本身；V3.6 只**复用** V3.2 prompts/state 重生成 profile，不再调 `/agent-creator` 引导对话）、Diff 视图、版本历史。
 
 ## 1. 阶段目标与边界
