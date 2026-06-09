@@ -131,8 +131,8 @@
     }
     .custom-agent-row {
       display: grid;
-      grid-template-columns: 40px 1fr auto;
-      gap: 12px; align-items: center;
+      grid-template-columns: 40px 1fr auto auto;
+      gap: 14px; align-items: center;
       padding: 12px 14px;
       border-bottom: 1px solid var(--border-light);
       cursor: pointer;
@@ -165,19 +165,17 @@
     }
     .row-meta .label { color: var(--text-3); display: block; }
     .row-meta .value { color: var(--text-2); }
-    .badge-active {
-      display: inline-block;
-      padding: 1px 8px; border-radius: 4px;
-      font-size: 10px; font-weight: 600;
-      background: var(--green);
-      color: white;
+    .row-edit {
+      padding: 5px 10px; border-radius: 5px;
+      font-size: 12px; font-weight: 500;
+      border: 1px solid transparent;
+      background: transparent; color: var(--text-2);
+      cursor: pointer; font-family: inherit;
+      display: inline-flex; align-items: center; gap: 4px;
     }
-    .badge-idle {
-      display: inline-block;
-      padding: 1px 8px; border-radius: 4px;
-      font-size: 10px; font-weight: 600;
-      background: var(--bg-input);
-      color: var(--text-3);
+    .row-edit:hover {
+      background: var(--primary-soft); color: var(--primary);
+      border-color: var(--primary-soft);
     }
     .empty-state {
       padding: 40px 24px; text-align: center; color: var(--text-3);
@@ -502,7 +500,6 @@
               <div class="row-main">
                 <div class="row-title">
                   React 助手 <span class="alias">@react-helper</span>
-                  <span class="badge-active">活跃</span>
                 </div>
                 <div class="row-cap-tags">
                   <span class="capability-tag">代码修改</span>
@@ -513,8 +510,11 @@
               <div class="row-meta">
                 <span class="label">最后运行</span>
                 <span class="value">2 小时前</span>
-                <span class="label">群聊 PRD Reviewer</span>
               </div>
+              <a class="row-edit" href="#edit">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                编辑
+              </a>
             </div>
 
             <div class="custom-agent-row">
@@ -522,7 +522,6 @@
               <div class="row-main">
                 <div class="row-title">
                   Doc Reviewer <span class="alias">@doc-reviewer</span>
-                  <span class="badge-idle">空闲</span>
                 </div>
                 <div class="row-cap-tags">
                   <span class="capability-tag">只读审查</span>
@@ -533,8 +532,11 @@
               <div class="row-meta">
                 <span class="label">最后运行</span>
                 <span class="value">3 天前</span>
-                <span class="label">群聊 产品文案</span>
               </div>
+              <a class="row-edit" href="#edit">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                编辑
+              </a>
             </div>
 
             <div class="custom-agent-row highlighted">
@@ -542,7 +544,6 @@
               <div class="row-main">
                 <div class="row-title">
                   Smoke Test <span class="alias">@v34-real-smoke</span>
-                  <span class="badge-idle">空闲</span>
                 </div>
                 <div class="row-cap-tags">
                   <span class="capability-tag">smoke</span>
@@ -552,13 +553,16 @@
               <div class="row-meta">
                 <span class="label">最后运行</span>
                 <span class="value">刚刚</span>
-                <span class="label">V3.5 群聊 smoke</span>
               </div>
+              <a class="row-edit" href="#edit">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                编辑
+              </a>
             </div>
           </div>
 
           <div class="detail-bar" style="margin-top: 18px;">
-            <span>↓ 高亮行 = 当前已选中，进入下方"详情视图"</span>
+            <span>点击行进入详情 · 点击右侧"编辑"直接进入编辑面板</span>
           </div>
         </div>
       </div>
@@ -860,11 +864,12 @@
     <div class="panel">
       <div class="panel-header">视图 1: 列表（list 状态）</div>
       <div class="panel-body">
-        <p class="desc">显示所有自建 Agent，每行含头像 + displayName + alias + 能力 tag + 最后运行信息。空态显示引导文案。</p>
+        <p class="desc">显示所有自建 Agent，每行含头像 + displayName + alias + 能力 tag + 最后运行时间。空态显示引导文案。</p>
         <ul>
-          <li>点击行 → 进入 <code>edit.preview</code> 详情视图</li>
-          <li>"最后运行" 链接到对应 conversation（V3.6 留 TODO）</li>
-          <li>无 system Agent（V3.5 决策：G6 单聊不接入；V3.6 设置页也不展示）</li>
+          <li>点击行任意位置 → <code>edit.preview</code> 详情</li>
+          <li>点击右侧"编辑" → <code>edit.editing</code> 编辑面板（不经详情）</li>
+          <li>不显示活跃/空闲状态（避免视觉拥挤）</li>
+          <li>不显示所在群聊（避免视觉拥挤；V3.6 不强求在列表感知）</li>
         </ul>
       </div>
     </div>
