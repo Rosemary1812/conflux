@@ -4,7 +4,7 @@ import { Check, Copy, FileText, RotateCcw } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AgentIcon } from "@/components/agents/AgentIcon";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { ArtifactCard } from "@/components/chat/ArtifactCard";
 import { InteractionApprovalCard } from "@/components/chat/InteractionApprovalCard";
 import { InteractionChoiceCard } from "@/components/chat/InteractionChoiceCard";
@@ -38,6 +38,8 @@ export const MessageBubble = memo(function MessageBubble({ message, roster, onRe
   const senderAvatar =
     tone === "orchestrator" ? "orchestrator" : rosterMember ? rosterMember.slug : message.avatar;
 
+  const isCustomAgentBubble = tone === "agent" && Boolean(rosterMember) && !rosterMember?.isSystem;
+
   const canStop =
     message.status === "running" && message.authorConversationAgentId && onStopAgent;
 
@@ -45,7 +47,16 @@ export const MessageBubble = memo(function MessageBubble({ message, roster, onRe
     <div className={`message-row ${tone}`}>
       {tone !== "user" ? (
         <span className={`message-avatar ${tone}`}>
-          {senderAvatar ? <AgentIcon agent={senderAvatar} size={25} /> : null}
+          {rosterMember ? (
+            <AgentAvatar
+              kind={rosterMember.avatarKind}
+              slug={rosterMember.slug}
+              value={rosterMember.avatarValue}
+              size={25}
+            />
+          ) : senderAvatar ? (
+            <AgentAvatar kind="system" slug={senderAvatar} value={senderAvatar} size={25} />
+          ) : null}
         </span>
       ) : null}
       <div className="message-body">
@@ -69,7 +80,10 @@ export const MessageBubble = memo(function MessageBubble({ message, roster, onRe
             </button>
           ) : null}
         </div>
-        <div className="message-bubble">
+        <div className={`message-bubble${isCustomAgentBubble ? " bubble-with-badge" : ""}`}>
+          {isCustomAgentBubble ? (
+            <span aria-label="自建 Agent 输出" className="bubble-live-dot" />
+          ) : null}
           <RichText text={message.body} />
           {message.attachments?.length ? <AttachmentList attachments={message.attachments} /> : null}
           {message.code ? (

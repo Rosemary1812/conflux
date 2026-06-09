@@ -57,6 +57,10 @@ export type RosterItem = {
   displayName: string;
   status: "active" | "idle" | "running" | "unavailable";
   slug: string;
+  isSystem: boolean;
+  avatarKind: "system" | "emoji" | "uploaded";
+  avatarValue: string;
+  capabilities: string[] | null;
 };
 
 export type GroupTask = {

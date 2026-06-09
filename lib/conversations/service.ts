@@ -9,6 +9,8 @@ import {
   parseAgentMentionsForRoster,
   slugFor
 } from "@/lib/agents/mention";
+import { parseCapabilitiesJson } from "@/lib/agents/avatar-schema";
+import type { AgentAvatarKind, AvailableAgentSummary } from "@/lib/agents/types";
 import type { AdapterAttachment } from "@/lib/adapters/types";
 import type { AgentSummary } from "@/lib/agents/types";
 import type { ConversationMode, ConversationSummary, MockMessage } from "@/lib/conversations/types";
@@ -43,14 +45,36 @@ export class ApiError extends Error {
   }
 }
 
-export function listAgents(): AgentSummary[] {
+export function listAgents(options: { conversationMode?: ConversationMode } = {}): AgentSummary[] {
+  const conditions = [eq(agents.enabled, true)];
+
+  if (options.conversationMode === "single") {
+    conditions.push(eq(agents.isSystem, true));
+  }
+
   return getDb()
     .select()
     .from(agents)
-    .where(eq(agents.enabled, true))
+    .where(and(...conditions))
     .orderBy(asc(agents.name))
     .all()
     .map(toAgentSummary);
+}
+
+export function listAvailableAgents(options: { conversationMode?: ConversationMode } = {}): AvailableAgentSummary[] {
+  const conditions = [eq(agents.enabled, true)];
+
+  if (options.conversationMode === "single") {
+    conditions.push(eq(agents.isSystem, true));
+  }
+
+  return getDb()
+    .select()
+    .from(agents)
+    .where(and(...conditions))
+    .orderBy(asc(agents.name))
+    .all()
+    .map(toAvailableAgentSummary);
 }
 
 export function createConversation(input: CreateConversationInput = {}) {
@@ -420,8 +444,14 @@ function sendSingleMessage(
   trimmed: string,
   incomingAttachments: IncomingAttachment[]
 ) {
+  const systemAgents = listAgents({ conversationMode: "single" });
   const allAgents = listAgents();
-  const parsed = parseAgentMentions(trimmed, allAgents);
+  const fullParsed = parseAgentMentions(trimmed, allAgents);
+  if (fullParsed.ok && fullParsed.mentions.some((agent) => !agent.isSystem)) {
+    throw new ApiError("自建 Agent 仅可用于群聊，请新建群聊后 @ 该 Agent。", 400);
+  }
+
+  const parsed = parseAgentMentions(trimmed, systemAgents);
 
   if (!parsed.ok) {
     throw new ApiError(parsed.error, 400);
@@ -931,7 +961,11 @@ export function getConversationRoster(conversationId: string) {
       displayName: conversationAgents.displayName,
       status: conversationAgents.status,
       slug: agents.slug,
-      name: agents.name
+      name: agents.name,
+      isSystem: agents.isSystem,
+      avatarKind: agents.avatarKind,
+      avatarValue: agents.avatarValue,
+      capabilities: agents.capabilities
     })
     .from(conversationAgents)
     .innerJoin(agents, eq(conversationAgents.agentId, agents.id))
@@ -950,12 +984,23 @@ export function getConversationRoster(conversationId: string) {
           ? `${row.name ?? currentDisplayName} ${sameSlugIndex}`
           : currentDisplayName;
 
+      const rawAvatarKind = row.avatarKind;
+      const avatarKind: "system" | "emoji" | "uploaded" =
+        rawAvatarKind === "emoji" || rawAvatarKind === "uploaded"
+          ? rawAvatarKind
+          : "system";
+      const avatarValue = avatarKind === "system" ? row.slug : row.avatarValue ?? "";
+
       return {
         id: row.id,
         alias: row.alias,
         displayName,
         status: row.status as "active" | "idle" | "running" | "unavailable",
-        slug: row.slug
+        slug: row.slug,
+        isSystem: row.isSystem,
+        avatarKind,
+        avatarValue,
+        capabilities: row.isSystem ? null : parseCapabilitiesJson(row.capabilities, `roster:${row.id}`)
       };
     });
 }
@@ -989,6 +1034,25 @@ function toAgentSummary(agent: AgentRow): AgentSummary {
     systemPrompt: agent.systemPrompt,
     permissionMode: agent.permissionMode as AgentSummary["permissionMode"],
     toolProfile: agent.toolProfile as AgentSummary["toolProfile"]
+  };
+}
+
+function toAvailableAgentSummary(agent: AgentRow): AvailableAgentSummary {
+  const rawKind = agent.avatarKind;
+  const avatarKind: AgentAvatarKind =
+    rawKind === "emoji" || rawKind === "uploaded" ? rawKind : "system";
+  const avatarValue = avatarKind === "system" ? agent.slug : agent.avatarValue ?? "";
+
+  return {
+    id: agent.id,
+    slug: agent.slug,
+    name: agent.name,
+    platform: agent.platform as AvailableAgentSummary["platform"],
+    description: agent.description,
+    isSystem: agent.isSystem,
+    avatarKind,
+    avatarValue,
+    capabilities: agent.isSystem ? null : parseCapabilitiesJson(agent.capabilities, `available:${agent.id}`)
   };
 }
 

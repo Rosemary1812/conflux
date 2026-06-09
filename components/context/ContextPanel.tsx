@@ -3,7 +3,9 @@
 import { FileText, GripVertical, TerminalSquare, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useRef, useState } from "react";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { AgentIcon } from "@/components/agents/AgentIcon";
+import type { AvailableAgentSummary } from "@/lib/agents/types";
 import type {
   ConversationArtifact,
   ConversationSummary,
@@ -14,6 +16,7 @@ import type {
 } from "@/lib/conversations/types";
 
 type ContextPanelProps = {
+  availableAgents: AvailableAgentSummary[];
   conversation: ConversationSummary | null;
   draftWorkspacePath?: string;
   mode: "context" | "terminal";
@@ -26,6 +29,7 @@ type ContextPanelProps = {
 };
 
 export function ContextPanel({
+  availableAgents,
   conversation,
   draftWorkspacePath,
   mode,
@@ -73,7 +77,11 @@ export function ContextPanel({
       {mode === "terminal" ? (
         <TerminalView conversation={conversation} />
       ) : isNew ? (
-        <NewConversationContext draftWorkspacePath={draftWorkspacePath} isGroup={isGroup} />
+        <NewConversationContext
+          availableAgents={availableAgents}
+          draftWorkspacePath={draftWorkspacePath}
+          isGroup={isGroup}
+        />
       ) : isGroup ? (
         <GroupContext roster={roster ?? []} tasks={tasks ?? []} />
       ) : (
@@ -83,7 +91,18 @@ export function ContextPanel({
   );
 }
 
-function NewConversationContext({ draftWorkspacePath, isGroup }: { draftWorkspacePath?: string; isGroup: boolean }) {
+function NewConversationContext({
+  availableAgents,
+  draftWorkspacePath,
+  isGroup
+}: {
+  availableAgents: AvailableAgentSummary[];
+  draftWorkspacePath?: string;
+  isGroup: boolean;
+}) {
+  const systemAgents = availableAgents.filter((agent) => agent.isSystem);
+  const customAgents = availableAgents.filter((agent) => !agent.isSystem);
+
   return (
     <div className="context-content">
       <section className="context-section">
@@ -108,12 +127,47 @@ function NewConversationContext({ draftWorkspacePath, isGroup }: { draftWorkspac
       </section>
       <section className="context-section">
         <div className="section-title">可用 Agent</div>
-        <ul className="file-list">
-          <li><AgentIcon agent="claude-code" size={18} />Claude Code</li>
-          <li><AgentIcon agent="codex" size={18} />Codex</li>
-          <li><AgentIcon agent="hermes" size={18} />Hermes</li>
-          <li><AgentIcon agent="opencode" size={18} />OpenCode</li>
-        </ul>
+        {systemAgents.length > 0 ? (
+          <>
+            <div className="subsection-title">系统</div>
+            <ul className="file-list">
+              {systemAgents.map((agent) => (
+                <li key={agent.id}>
+                  <AgentAvatar kind={agent.avatarKind} slug={agent.slug} value={agent.avatarValue} size={18} />
+                  {agent.name}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+        {isGroup ? (
+          customAgents.length > 0 ? (
+            <>
+              <div className="subsection-title">自建</div>
+              <ul className="file-list">
+                {customAgents.map((agent) => (
+                  <li key={agent.id} className="available-agent-row">
+                    <AgentAvatar kind={agent.avatarKind} slug={agent.slug} value={agent.avatarValue} size={18} />
+                    <div className="available-agent-meta">
+                      <strong>{agent.name}</strong>
+                      {agent.capabilities?.length ? (
+                        <div className="capability-tags">
+                          {agent.capabilities.map((tag) => (
+                            <span className="capability-tag" key={tag}>
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="context-note">还没有自建 Agent。去单聊里调 /agent-creator 创建一个。</p>
+          )
+        ) : null}
       </section>
     </div>
   );
@@ -310,12 +364,7 @@ function GroupContext({ roster, tasks }: { roster: RosterItem[]; tasks: GroupTas
         <div className="section-title">参与上下文</div>
         <div className="agent-stack-card">
           {roster.map((member) => (
-            <AgentState
-              detail={`@${member.alias} · ${statusLabel(member.status)}`}
-              key={member.id}
-              name={member.displayName}
-              slug={member.slug}
-            />
+            <RosterAgentState key={member.id} member={member} />
           ))}
           <AgentState detail="调度中" name="Orchestrator" slug="orchestrator" />
         </div>
@@ -357,6 +406,34 @@ function AgentState({ name, slug, detail }: { name: string; slug: string; detail
       <div>
         <strong>{name}</strong>
         <p>{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+function RosterAgentState({ member }: { member: RosterItem }) {
+  return (
+    <div className="agent-state-row">
+      <span className="context-agent-icon">
+        <AgentAvatar
+          kind={member.avatarKind}
+          slug={member.slug}
+          value={member.avatarValue}
+          size={22}
+        />
+      </span>
+      <div>
+        <strong>{member.displayName}</strong>
+        <p>{`@${member.alias} · ${statusLabel(member.status)}`}</p>
+        {!member.isSystem && member.capabilities?.length ? (
+          <div className="capability-tags">
+            {member.capabilities.map((tag) => (
+              <span className="capability-tag" key={tag}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );

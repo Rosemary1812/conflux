@@ -14,6 +14,7 @@ import type {
   MockMessage,
   RosterItem
 } from "@/lib/conversations/types";
+import type { AvailableAgentSummary } from "@/lib/agents/types";
 import type { ConversationStreamEvent } from "@/lib/conversations/stream-bus";
 import type { AgentInteraction, InteractionDecision } from "@/lib/interactions/types";
 import type { AgentDraft } from "@/lib/skills/agent-creator/types";
@@ -35,6 +36,7 @@ export function AppShell() {
   const [contextWidth, setContextWidth] = useState(312);
   const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | undefined>();
   const [roster, setRoster] = useState<RosterItem[]>([]);
+  const [availableAgents, setAvailableAgents] = useState<AvailableAgentSummary[]>([]);
   const [orchestratorTasks, setOrchestratorTasks] = useState<GroupTask[]>([]);
   const [agentCreatorPreview, setAgentCreatorPreview] = useState<{
     draft: AgentDraft | null;
@@ -58,6 +60,27 @@ export function AppShell() {
   useEffect(() => {
     void loadConversations();
   }, []);
+
+  useEffect(() => {
+    const conversationMode: "single" | "group" = isGroup ? "group" : "single";
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/agents?conversationMode=${conversationMode}`);
+        const payload = (await response.json()) as { agents?: AvailableAgentSummary[] };
+        if (!cancelled) {
+          setAvailableAgents(payload.agents ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setAvailableAgents([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGroup]);
 
   useEffect(() => {
     if (!activeConversationId) {
@@ -921,6 +944,7 @@ export function AppShell() {
       </section>
       {!contextCollapsed ? (
         <ContextPanel
+          availableAgents={availableAgents}
           conversation={activeConversation}
           draftWorkspacePath={draftWorkspacePath}
           mode={contextMode}
