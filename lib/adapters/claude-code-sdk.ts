@@ -1,4 +1,4 @@
-import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type CanUseTool, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { formatAttachmentContext, type AdapterRunParams, type AgentAdapter, type AgentEvent } from "@/lib/adapters/types";
 import { getAnthropicRuntimeProvider } from "@/lib/providers/service";
 import { getProfileMeta } from "@/lib/skills/agent-creator/profiles";
@@ -7,7 +7,7 @@ import type { ToolProfile } from "@/lib/skills/agent-creator/types";
 export const claudeCodeSdkAdapter: AgentAdapter = {
   platform: "claude_code",
   capabilities: {
-    supportsApproval: "none",
+    supportsApproval: "native",
     supportsChoice: "none"
   },
   async healthcheck() {
@@ -75,6 +75,7 @@ async function* runClaudeCodeSdk(params: AdapterRunParams): AsyncIterable<AgentE
         abortController,
         allowDangerouslySkipPermissions: profile.allowDangerouslySkipPermissions,
         allowedTools: profile.allowedTools,
+        canUseTool: createCustomAgentPermissionHandler(params),
         cwd: params.workspacePath,
         disallowedTools: profile.disallowedTools,
         env: buildSdkEnv(provider),
@@ -219,8 +220,38 @@ function buildSystemPrompt(params: AdapterRunParams) {
     "",
     "You are running inside AgentHub as a user-created agent.",
     "Use the current working directory as the only project workspace unless the user explicitly provides another path.",
-    "V3.4 does not yet provide AgentHub inline Approval or Choice bridging for this custom-agent adapter; keep user-facing questions concise in normal text."
+    "V3.7 C1: Tool permission requests are bridged to the AgentHub inline Approval card. Choice bridging is not yet wired; keep user-facing questions concise in normal text."
   ].join("\n");
+}
+
+function createCustomAgentPermissionHandler(params: AdapterRunParams): CanUseTool {
+  return async (toolName, input, options) => {
+    const decision = await params.requestInteraction({
+      kind: "approval",
+      messageId: "",
+      payload: {
+        action: actionForTool(toolName),
+        summary: options.title ?? options.displayName ?? `自建 Agent ${params.agent.name} 请求使用 ${toolName}`,
+        command: commandFromInput(input),
+        path: pathFromInput(input, options.blockedPath),
+        risk: options.description ?? options.decisionReason ?? "该操作需要用户确认后才能继续。"
+      }
+    });
+
+    if (decision.kind === "approval" && decision.approved) {
+      return {
+        behavior: "allow",
+        updatedInput: input,
+        toolUseID: options.toolUseID
+      };
+    }
+
+    return {
+      behavior: "deny",
+      message: "用户在 AgentHub 中拒绝了该操作。",
+      toolUseID: options.toolUseID
+    };
+  };
 }
 
 function sessionIdFromSdkMessage(message: SDKMessage) {
@@ -284,4 +315,32 @@ function resultErrorText(message: Extract<SDKMessage, { type: "result" }>) {
   }
 
   return "自建 Agent SDK 运行失败。";
+}
+
+function actionForTool(toolName: string) {
+  const normalized = toolName.toLowerCase();
+
+  if (normalized.includes("bash") || normalized.includes("shell")) {
+    return "run_command";
+  }
+
+  if (normalized.includes("write") || normalized.includes("edit") || normalized.includes("patch")) {
+    return "write_file";
+  }
+
+  if (normalized.includes("web") || normalized.includes("fetch")) {
+    return "network";
+  }
+
+  return "tool_use";
+}
+
+function commandFromInput(input: Record<string, unknown>) {
+  const command = input.command ?? input.cmd ?? input.script;
+  return typeof command === "string" ? command : undefined;
+}
+
+function pathFromInput(input: Record<string, unknown>, blockedPath?: string) {
+  const filePath = input.file_path ?? input.path ?? input.notebook_path ?? blockedPath;
+  return typeof filePath === "string" ? filePath : undefined;
 }
