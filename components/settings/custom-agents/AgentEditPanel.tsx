@@ -33,6 +33,7 @@ type AgentEditPanelProps = {
   onCancel: () => void;
   onRegenerate: () => void;
   isSaving: boolean;
+  isRegenerating?: boolean;
 };
 
 export function AgentEditPanel({
@@ -43,7 +44,8 @@ export function AgentEditPanel({
   onSave,
   onCancel,
   onRegenerate,
-  isSaving
+  isSaving,
+  isRegenerating = false
 }: AgentEditPanelProps) {
   const profiles = listProfileMetas();
   const [capabilityInput, setCapabilityInput] = useState("");
@@ -273,9 +275,14 @@ export function AgentEditPanel({
         <div className="regen-block">
           <h6>重新生成 profile（LLM 用当前字段 + 可选说明）</h6>
           <p>不持久化 regen 会话；点击下方按钮触发一次 Planner LLM 调用，结果回填到上方表单。</p>
-          <button className="btn" onClick={onRegenerate} type="button" disabled={isSaving}>
+          <button
+            className="btn"
+            disabled={isSaving || isRegenerating}
+            onClick={onRegenerate}
+            type="button"
+          >
             <RefreshCcw size={13} />
-            重新生成
+            {isRegenerating ? "生成中..." : "重新生成"}
           </button>
         </div>
 

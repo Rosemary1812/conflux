@@ -595,6 +595,7 @@ function CustomAgentsPanel() {
     precheck: AgentDeletePrecheck;
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   const loadList = useCallback(async () => {
     setIsLoading(true);
@@ -752,7 +753,60 @@ function CustomAgentsPanel() {
 
   async function regenerate() {
     if (!currentAgent) return;
-    setStatus("重新生成 profile（V3.6 C4 实现）");
+    setIsRegenerating(true);
+    setStatus("Planner 正在重新生成 profile...");
+    try {
+      const response = await fetch(`/api/agents/${currentAgent.id}/regenerate-profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const payload = (await response.json()) as {
+        draft?: Partial<{
+          name: string;
+          alias: string;
+          display_name: string;
+          description: string;
+          system_prompt: string;
+          permission_mode: "readonly" | "editable";
+          capabilities: string[];
+          tool_profile: "readonly" | "code-author" | "executor";
+        }>;
+        summary?: string;
+        warnings?: string[];
+        error?: string;
+      };
+      if (!response.ok || !payload.draft) {
+        setStatus(payload.error ?? "重新生成失败。");
+        return;
+      }
+      const patch = payload.draft;
+      const baseDraft = currentAgent ? agentToDraft(currentAgent) : draft;
+      const merged: AgentFormDraft = {
+        ...baseDraft,
+        name: patch.name ?? baseDraft.name,
+        alias: patch.alias ?? baseDraft.alias,
+        description: patch.description ?? baseDraft.description,
+        systemPrompt: patch.system_prompt ?? baseDraft.systemPrompt,
+        permissionMode: patch.permission_mode ?? baseDraft.permissionMode,
+        toolProfile: patch.tool_profile ?? baseDraft.toolProfile,
+        capabilities:
+          patch.capabilities && patch.capabilities.length > 0
+            ? patch.capabilities
+            : baseDraft.capabilities
+      };
+      setDraft(merged);
+      setFieldErrors({});
+      setMode({ kind: "edit", agentId: currentAgent.id });
+      const warn = payload.warnings && payload.warnings.length > 0
+        ? `；警告：${payload.warnings.join("；")}`
+        : "";
+      setStatus(`已重新生成${warn}。请检查后保存。`);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "重新生成失败。");
+    } finally {
+      setIsRegenerating(false);
+    }
   }
 
   async function startDelete() {
@@ -828,6 +882,7 @@ function CustomAgentsPanel() {
         <AgentDetailPanel
           data={currentAgent}
           precheck={mode.precheck}
+          isRegenerating={isRegenerating}
           onBack={() => {
             setCurrentAgent(null);
             setDeleteConfirm(null);
@@ -849,6 +904,7 @@ function CustomAgentsPanel() {
           data={currentAgent}
           draft={draft}
           fieldErrors={fieldErrors}
+          isRegenerating={isRegenerating}
           isSaving={isSaving}
           onCancel={cancelEdit}
           onChange={(patch) => setDraft((value) => ({ ...value, ...patch }))}

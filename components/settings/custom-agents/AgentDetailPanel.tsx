@@ -18,6 +18,7 @@ type AgentDetailPanelProps = {
   onEdit: () => void;
   onRegenerate: () => void;
   onDelete: () => void;
+  isRegenerating?: boolean;
 };
 
 export function AgentDetailPanel({
@@ -26,7 +27,8 @@ export function AgentDetailPanel({
   onBack,
   onEdit,
   onRegenerate,
-  onDelete
+  onDelete,
+  isRegenerating = false
 }: AgentDetailPanelProps) {
   const [systemPromptExpanded, setSystemPromptExpanded] = useState(false);
   const SYSTEM_PROMPT_PREVIEW_LINES = 6;
@@ -126,12 +128,12 @@ export function AgentDetailPanel({
       </div>
 
       <div className="custom-agent-detail-actions">
-        <button className="btn" onClick={onRegenerate} type="button">
+        <button className="btn" disabled={isRegenerating} onClick={onRegenerate} type="button">
           <RefreshCcw size={13} />
-          重新生成 profile
+          {isRegenerating ? "生成中..." : "重新生成 profile"}
         </button>
         <div style={{ flex: 1 }} />
-        <button className="btn primary" onClick={onEdit} type="button">
+        <button className="btn primary" disabled={isRegenerating} onClick={onEdit} type="button">
           编辑
         </button>
       </div>
