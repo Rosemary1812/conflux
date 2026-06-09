@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { agentUpdateSchema } from "@/lib/agents/edit-schema";
+import { publishAgentEvent } from "@/lib/agents/stream-bus";
 import {
   deleteSelfBuiltAgent,
   getSelfBuiltAgentById,
@@ -49,6 +50,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   try {
     const agent = updateSelfBuiltAgent(id, parsed.data);
+    publishAgentEvent({ type: "agent_updated", agentId: id, agent });
     return NextResponse.json({ agent });
   } catch (error) {
     if (error instanceof SelfBuiltAgentError) {
@@ -65,6 +67,7 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
     const result = deleteSelfBuiltAgent(id);
+    publishAgentEvent({ type: "agent_deleted", agentId: id });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof SelfBuiltAgentError) {

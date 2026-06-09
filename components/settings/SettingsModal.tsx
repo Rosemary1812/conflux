@@ -21,6 +21,7 @@ import { AgentDetailPanel } from "@/components/settings/custom-agents/AgentDetai
 import { AgentEditPanel } from "@/components/settings/custom-agents/AgentEditPanel";
 import { AgentListPanel } from "@/components/settings/custom-agents/AgentListPanel";
 import type { AgentAvatarKind, AgentSummary, SelfBuiltAgentListItem } from "@/lib/agents/types";
+import { subscribeAgentEvents } from "@/lib/agents/stream-bus";
 import type { AgentDeletePrecheck } from "@/lib/conversations/service";
 
 type SettingsModalProps = {
@@ -620,6 +621,28 @@ function CustomAgentsPanel() {
   useEffect(() => {
     void loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    if (!open) return;
+    return subscribeAgentEvents((event) => {
+      if (event.type === "agent_updated") {
+        setCurrentAgent((current) => (current && current.id === event.agentId ? event.agent : current));
+        void loadList();
+      } else if (event.type === "agent_deleted") {
+        setCurrentAgent((current) => (current && current.id === event.agentId ? null : current));
+        setDeleteConfirm(null);
+        if (mode.kind === "edit" && mode.agentId === event.agentId) {
+          setMode({ kind: "list" });
+          setStatus("该 Agent 已被其他客户端删除。");
+        }
+        if (mode.kind === "detail" && mode.agentId === event.agentId) {
+          setMode({ kind: "list" });
+          setStatus("该 Agent 已被其他客户端删除。");
+        }
+        void loadList();
+      }
+    });
+  }, [open, loadList, mode]);
 
   async function openDetail(agentId: string) {
     setStatus("");
