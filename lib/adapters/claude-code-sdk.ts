@@ -224,7 +224,8 @@ function buildSystemPrompt(params: AdapterRunParams) {
   ].join("\n");
 }
 
-function createCustomAgentPermissionHandler(params: AdapterRunParams): CanUseTool {
+/** @internal Exposed for V3.7 C1 smoke only; not part of the public adapter surface. */
+export function createCustomAgentPermissionHandler(params: AdapterRunParams): CanUseTool {
   return async (toolName, input, options) => {
     const decision = await params.requestInteraction({
       kind: "approval",

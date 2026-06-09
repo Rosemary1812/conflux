@@ -20,6 +20,14 @@
   涉及修改文件：`package.json`、`package-lock.json`
   验收标准：`npm audit --audit-level=moderate` 不再报告该 `postcss` 告警，且 `npm run build`、`npm run typecheck` 通过。
 
+- 时间：2026-06-09
+  优先级：P2
+  所属范围：构建 / Next.js 15.5.18 Windows 沙箱
+  问题/目标：`npm run build` 在本机沙箱下报错 `EPERM: operation not permitted, scandir 'C:\Users\wsmdm\Application Data'`，整个 webpack 编译失败。该 symlink 指向 `C:\Users\wsmdm\AppData\Roaming` 但 scandir 时被 Windows ACL 拒绝；和 handoff 已记录的 `C:\Users\wsmdm/.config/git/ignore` warning 同源。`npm run typecheck` 与 `npx next dev` 编译路径均能通过，问题仅出现在 `next build` 的 webpack output 阶段（很可能是 file tracing / instrumentation 阶段）。当前所有 C1 改动通过 dev 编译 + typecheck + `git diff --check` 验收。
+  解决方案：先在本机尝试 A) `setx APPDATA C:\Users\wsmdm\AppData\Roaming` 后重跑；B) `npm_config_cache`/`NEXT_TELEMETRY_DISABLED=1` 等环境变量绕开；C) 把 `Application Data` 死链的指向改回 `AppData\Roaming`；以上都不行再考虑在 `next.config.ts` 显式 `output: "standalone"` 或 `experimental.outputFileTracingIgnores` 收敛 trace 范围。**不要**在 C1/V3.7 提交里顺手改 next config，避免扩大 blast radius。
+  涉及修改文件：环境层（待定）
+  验收标准：`npm run build` 在不绕过本机 Application Data symlink 的情况下通过；C1/V3.7 已提交的代码不被本问题影响。
+
 ## 已做
 
 - 时间：2026-06-08
